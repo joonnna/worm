@@ -15,10 +15,10 @@ import (
 )
 
 type Seg struct {
-	HostName       string
-	SegmentPort    string
-	WormgatePort   string
-	TargetSegments int
+	hostName       string
+	segmentPort    string
+	wormgatePort   string
+	targetSegments int
 
 	targetMutex *sync.Mutex
 }
@@ -26,16 +26,16 @@ type Seg struct {
 func (s Seg) StartSegmentServer() {
 
 	http.HandleFunc("/", s.IndexHandler)
-	http.HandleFunc("/TargetSegments", s.TargetSegmentsHandler)
+	http.HandleFunc("/targetSegments", s.targetSegmentsHandler)
 	http.HandleFunc("/shutdown", s.shutdownHandler)
 	http.HandleFunc("/alive", s.aliveHandler)
 
-	log.Printf("Starting Segment server on %s%s\n", s.HostName, s.SegmentPort)
-	log.Printf("Reachable hosts: %s", strings.Join(util.FetchReachableHosts(s.WormgatePort), " "))
+	log.Printf("Starting Segment server on %s%s\n", s.hostName, s.segmentPort)
+	log.Printf("Reachable hosts: %s", strings.Join(util.FetchReachableHosts(s.wormgatePort), " "))
 
 	go s.monitorWorm()
 
-	err := http.ListenAndServe(s.SegmentPort, nil)
+	err := http.ListenAndServe(s.segmentPort, nil)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -52,22 +52,22 @@ func (s Seg) IndexHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "%.3f\n", killRateGuess)
 }
 
-func (s *Seg) TargetSegmentsHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Seg) targetSegmentsHandler(w http.ResponseWriter, r *http.Request) {
 
 	var ts int32
 	pc, rateErr := fmt.Fscanf(r.Body, "%d", &ts)
 	if pc != 1 || rateErr != nil {
-		log.Printf("Error parsing TargetSegments (%d items): %s", pc, rateErr)
+		log.Printf("Error parsing targetSegments (%d items): %s", pc, rateErr)
 	}
 
 	// Consume and close rest of body
 	io.Copy(ioutil.Discard, r.Body)
 	r.Body.Close()
 
-	log.Printf("New TargetSegments: %d", ts)
+	log.Printf("New targetSegments: %d", ts)
 
 	s.targetMutex.Lock()
-	s.TargetSegments = int(ts)
+	s.targetSegments = int(ts)
 	s.targetMutex.Unlock()
 }
 
@@ -95,7 +95,7 @@ func (s Seg) monitorWorm() {
 		var counter int
 		highestHash := big.NewInt(0)
 
-		allHosts := util.FetchReachableHosts(s.WormgatePort)
+		allHosts := util.FetchReachableHosts(s.wormgatePort)
 
 		for _, host := range allHosts {
 
@@ -114,7 +114,7 @@ func (s Seg) monitorWorm() {
 			}
 		}
 
-		ownHash := hostMap[s.HostName]
+		ownHash := hostMap[s.hostName]
 		if util.CmpHash(ownHash, highestHash) {
 			s.checkTarget(counter, allHosts)
 		}
@@ -138,7 +138,7 @@ func (s Seg) checkTarget(numSegs int, allHosts []string) {
 	var target int
 
 	s.targetMutex.Lock()
-	target = s.TargetSegments
+	target = s.targetSegments
 	s.targetMutex.Unlock()
 
 	if target > numSegs {
@@ -178,7 +178,7 @@ func (s Seg) addSegments(numSegs int, allHosts []string) {
 
 func (s Seg) SendSegment(address string) {
 
-	url := fmt.Sprintf("http://%s%s/wormgate?sp=%s", address, s.WormgatePort, s.SegmentPort)
+	url := fmt.Sprintf("http://%s%s/wormgate?sp=%s", address, s.wormgatePort, s.segmentPort)
 	filename := "tmp.tar.gz"
 
 	log.Printf("Spreading to %s", url)
@@ -205,5 +205,26 @@ func (s Seg) SendSegment(address string) {
 		log.Println("Received OK from server")
 	} else {
 		log.Println("Response: ", resp)
+	}
+}
+
+func Run(wormPort, segPort, mode, spreadHost string) {
+	hostName, _ := os.Hostname()
+
+	s := &Seg{
+		hostName:     hostName,
+		segmentPort:  segPort,
+		wormgatePort: wormPort,
+	}
+
+	switch mode {
+
+	case "spread":
+		s.SendSegment(spreadHost)
+	case "run":
+		s.StartSegmentServer()
+
+	default:
+		log.Fatalf("Unknown mode %q\n", os.Args[1])
 	}
 }

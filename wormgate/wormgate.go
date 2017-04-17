@@ -1,9 +1,9 @@
 package wormgate
 
 import (
-	"github.com/joonnna/worm/rocks"
 	"flag"
 	"fmt"
+	"github.com/joonnna/worm/rocks"
 	"io"
 	"io/ioutil"
 	"log"
@@ -31,10 +31,13 @@ var runningSegment struct {
 	p *os.Process
 }
 
-func Run() {
+func Run(wormPort string) {
+	/*
+		flag.StringVar(&wormgatePort, "wp", ":8181", "wormgate port (prefix with colon)")
+		flag.Parse()
+	*/
 
-	flag.StringVar(&wormgatePort, "wp", ":8181", "wormgate port (prefix with colon)")
-	flag.Parse()
+	wormgatePort = wormPort
 
 	allHosts = rocks.ListNodes()
 
