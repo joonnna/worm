@@ -1,7 +1,7 @@
 package visualize
 
 import (
-	"./rocks"
+	"github.com/joonnna/worm/rocks"
 	"bufio"
 	"bytes"
 	"flag"

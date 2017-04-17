@@ -1,7 +1,7 @@
 package wormgate
 
 import (
-	"./rocks"
+	"github.com/joonnna/worm/rocks"
 	"flag"
 	"fmt"
 	"io"
