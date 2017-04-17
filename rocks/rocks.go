@@ -18,5 +18,12 @@ func ListNodes() []string {
 
 	trimmed := strings.TrimSpace(string(out))
 	nodes := strings.Split(trimmed, "\n")
+
+	for i, node := range nodes {
+		if node == "compute-2-20" {
+			nodes = append(nodes[:i], nodes[i+1:]...)
+		}
+	}
+
 	return nodes
 }
