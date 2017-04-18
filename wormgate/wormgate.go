@@ -1,7 +1,7 @@
 package wormgate
 
 import (
-	"flag"
+	_ "flag"
 	"fmt"
 	"github.com/joonnna/worm/rocks"
 	"io"
@@ -50,15 +50,16 @@ func Run(wormPort string) {
 	}
 	log.Printf("Current user: %s\n", curuser.Username)
 
-	path = *flag.String("path", "/tmp/wormgate-"+curuser.Username,
-		"where to store segment code")
+	path = "/tmp/wormgate-" + curuser.Username
+	//path = *flag.String("path", "/tmp/wormgate-"+curuser.Username,
+	//	"where to store segment code")
 
 	log.Printf("Changing working directory to " + path)
 	os.Chdir(path)
 
 	rand.Seed(time.Now().Unix())
 
-	flag.Parse()
+	//flag.Parse()
 
 	http.HandleFunc("/", IndexHandler)
 	http.HandleFunc("/wormgate", WormGateHandler)
@@ -106,7 +107,11 @@ func WormGateHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Panic("Could not create directory to store segment ", err)
 	}
-	os.Chdir(extractionpath)
+	fmt.Println(extractionpath)
+	err = os.Chdir(extractionpath)
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer os.Chdir(path) // change back to base directory later
 
 	// Create file and store incoming segment
@@ -114,7 +119,7 @@ func WormGateHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Panic("Could not create file to store segment", err)
 	}
-	defer os.Remove(fn) // let's remove the tarball later
+	//defer os.Remove(fn) // let's remove the tarball later
 
 	// Read from http POST
 	body, err := ioutil.ReadAll(r.Body)
@@ -140,8 +145,14 @@ func WormGateHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Start command, do not wait for it to complete
 	binary := extractionpath + "/" + "segment"
+	/*
+		err = os.Chmod(binary, 1)
+		if err != nil {
+			log.Fatal(err)
+		}
+	*/
 	cmdline = []string{"stdbuf", "-oL", "-eL",
-		binary, "run", "-wp", wormgatePort, "-sp", segmentPort}
+		binary, "-mode", "run", "-wp", wormgatePort, "-sp", segmentPort}
 	log.Printf("Running segment: %q", cmdline)
 	cmd := exec.Command(cmdline[0], cmdline[1:]...)
 	cmd.Stdout = os.Stdout
