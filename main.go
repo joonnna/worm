@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	_ "fmt"
+	_"fmt"
 	"github.com/joonnna/worm/segment"
 	"github.com/joonnna/worm/visualize"
 	"github.com/joonnna/worm/wormgate"
@@ -17,22 +17,11 @@ func main() {
 	hostname, _ = os.Hostname()
 	log.SetPrefix(hostname + " segment: ")
 
-	flags := flag.NewFlagSet("args", flag.ExitOnError)
-	addFlags(flags, &wormPort, &segPort, &mode, &host, &progType)
-
-	flags.Parse(os.Args)
-	/*
-		var spreadMode = flag.NewFlagSet("spread", flag.ExitOnError)
-		addCommonFlags(spreadMode, &wormPort, &segPort)
-		var spreadHost = spreadMode.String("host", "localhost", "host to spread to")
-
-		var runMode = flag.NewFlagSet("run", flag.ExitOnError)
-		addCommonFlags(runMode, &wormPort, &segPort)
-	*/
-	if len(os.Args) == 1 {
-		log.Fatalf("No mode specified\n")
-	}
-
+	args := flag.NewFlagSet("args", flag.ExitOnError)
+	addFlags(args, &wormPort, &segPort, &mode, &host, &progType)
+	
+	args.Parse(os.Args[1:])
+	
 	switch progType {
 
 	case "visualizer":
