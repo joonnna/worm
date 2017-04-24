@@ -32,11 +32,8 @@ var runningSegment struct {
 }
 
 func Run(wormPort string) {
-	/*
-		flag.StringVar(&wormgatePort, "wp", ":8181", "wormgate port (prefix with colon)")
-		flag.Parse()
-	*/
 
+	//flag.Parse()
 	wormgatePort = wormPort
 
 	allHosts = rocks.ListNodes()
@@ -50,16 +47,15 @@ func Run(wormPort string) {
 	}
 	log.Printf("Current user: %s\n", curuser.Username)
 
-	path = "/tmp/wormgate-" + curuser.Username
 	//path = *flag.String("path", "/tmp/wormgate-"+curuser.Username,
 	//	"where to store segment code")
+
+	path = "/tmp/wormgate-" + curuser.Username
 
 	log.Printf("Changing working directory to " + path)
 	os.Chdir(path)
 
 	rand.Seed(time.Now().Unix())
-
-	//flag.Parse()
 
 	http.HandleFunc("/", IndexHandler)
 	http.HandleFunc("/wormgate", WormGateHandler)
@@ -107,11 +103,7 @@ func WormGateHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Panic("Could not create directory to store segment ", err)
 	}
-	fmt.Println(extractionpath)
-	err = os.Chdir(extractionpath)
-	if err != nil {
-		log.Fatal(err)
-	}
+	os.Chdir(extractionpath)
 	defer os.Chdir(path) // change back to base directory later
 
 	// Create file and store incoming segment
@@ -119,53 +111,79 @@ func WormGateHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Panic("Could not create file to store segment", err)
 	}
-	//defer os.Remove(fn) // let's remove the tarball later
+	defer os.Remove(fn) // let's remove the tarball later
 
 	// Read from http POST
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		log.Panic("Could not read body from http POST", err)
+		// Could not read body from POST.
+		// Probably the segment was killed while trying to send.
+		// That's the worm's problem, not ours. So just abort.
+		log.Print("Error reading payload.", err)
+		return
 	}
 
 	// Write tarball to file
-	file.Write(body)
-	err = file.Close()
+	_, err = file.Write(body)
 	if err != nil {
-		log.Panic("Error closing segment executable", err)
+		log.Print("Error writing payload file.", err)
+		return
 	}
 
-	// extract segment
+	err = file.Close()
+	if err != nil {
+		log.Print("Error closing payload file.", err)
+		return
+	}
+
+	// extract
+	// segment
 	cmdline := []string{"tar", "-xzf", fn}
 	log.Printf("Extracting segment: %q", cmdline)
 	tarCmd := exec.Command(cmdline[0], cmdline[1:]...)
 	err = tarCmd.Run()
 	if err != nil {
-		log.Panic("Error extracting segment ", err)
+		log.Print("Error extracting segment.", err)
+		return
 	}
 
-	// Start command, do not wait for it to complete
+	// Start
+	// command,
+	// do
+	// not
+	// wait
+	// for
+	// it
+	// to
+	// complete
 	binary := extractionpath + "/" + "main"
-	/*
-		err = os.Chmod(binary, 1)
-		if err != nil {
-			log.Fatal(err)
-		}
-	*/
 	cmdline = []string{"stdbuf", "-oL", "-eL",
-		binary, "-mode", "run", "-wp", wormgatePort, "-sp", segmentPort}
+		binary, "-mode", "run", "-wp", wormgatePort, "-sp", segmentPort, "-prog", "segment", "-target", r.Header.Get("targetsegment")}
 	log.Printf("Running segment: %q", cmdline)
 	cmd := exec.Command(cmdline[0], cmdline[1:]...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	//cmd.Dir = path
+	//cmd.Dir
+	//=
+	//path
 	err = cmd.Start()
 	if err != nil {
-		log.Panic("Error starting segment ", err)
+		log.Print("Error starting segment ", err)
+		return
 	}
 	runningSegment.p = cmd.Process
 
 	go func() {
-		// Wait for process to end and reset the process pointer
+		// Wait
+		// for
+		// process
+		// to
+		// end
+		// and
+		// reset
+		// the
+		// process
+		// pointer
 		runningSegment.RLock()
 		p := runningSegment.p
 		runningSegment.RUnlock()
@@ -181,7 +199,15 @@ func WormGateHandler(w http.ResponseWriter, r *http.Request) {
 func killSegmentHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
-	// We don't use the body, but read it anyway
+	// We
+	// don't
+	// use
+	// the
+	// body,
+	// but
+	// read
+	// it
+	// anyway
 	io.Copy(ioutil.Discard, r.Body)
 
 	runningSegment.Lock()
@@ -205,7 +231,15 @@ func killSegmentHandler(w http.ResponseWriter, r *http.Request) {
 
 func IndexHandler(w http.ResponseWriter, r *http.Request) {
 
-	// We don't use the body, but read it anyway
+	// We
+	// don't
+	// use
+	// the
+	// body,
+	// but
+	// read
+	// it
+	// anyway
 	io.Copy(ioutil.Discard, r.Body)
 	r.Body.Close()
 
@@ -214,7 +248,15 @@ func IndexHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func reachableHostsHandler(w http.ResponseWriter, r *http.Request) {
-	// We don't use the body, but read it anyway
+	// We
+	// don't
+	// use
+	// the
+	// body,
+	// but
+	// read
+	// it
+	// anyway
 	io.Copy(ioutil.Discard, r.Body)
 	r.Body.Close()
 
@@ -251,7 +293,12 @@ func partitionSchemeHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error parsing partitionScheme (%d items): %s", pc, rateErr)
 	}
 
-	// Consume and close rest of body
+	// Consume
+	// and
+	// close
+	// rest
+	// of
+	// body
 	io.Copy(ioutil.Discard, r.Body)
 	r.Body.Close()
 

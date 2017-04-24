@@ -44,5 +44,5 @@ func addFlags(flagset *flag.FlagSet, wormPort, segPort, mode, host, progType *st
 	flagset.StringVar(progType, "prog", "visualizer", "program to run")
 	flagset.StringVar(mode, "mode", "run", "segment mode")
 	flagset.StringVar(host, "host", "compute-1-0", "host to spread to")
-	flagset.IntVar(target, "target", 5, "segment target number")
+	flagset.IntVar(target, "target", 2, "segment target number")
 }

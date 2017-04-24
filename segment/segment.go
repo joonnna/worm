@@ -37,7 +37,7 @@ type Seg struct {
 	allHosts    []string
 	activeHosts []string
 
-	spreadFile *os.File
+	spreadFile string
 
 	targetMutex      sync.RWMutex
 	leaderMutex      sync.RWMutex
@@ -155,7 +155,7 @@ func (s *Seg) monitorWorm() {
 	hostMap := make(map[string]big.Int)
 	for {
 
-		time.Sleep(time.Second * 2)
+		time.Sleep(time.Second)
 		highestHash := *big.NewInt(0)
 
 		allHosts := s.getAllHosts()
@@ -181,12 +181,12 @@ func (s *Seg) monitorWorm() {
 		}
 
 		if s.getLeader() == s.hostName {
-			/*
-				if s.spreadFile == nil {
-					s.tarFile()
-					defer os.Remove(s.spreadFile.Name())
-				}
-			*/
+
+			if s.spreadFile == "" {
+				s.tarFile()
+				defer os.Remove(s.spreadFile)
+			}
+
 			s.Info.Println("IM THE BIGGEST MOFO")
 			s.checkTarget((len(activeSegs) + 1), allHosts, activeSegs)
 		}
@@ -285,29 +285,37 @@ func (s Seg) sendSegment(address string) error {
 
 	url := fmt.Sprintf("http://%s%s/wormgate?sp=%s", address, s.wormgatePort, s.segmentPort)
 
-	filename := "tmp.tar.gz"
+	/*
+		filename := "tmp.tar.gz"
 
-	// ship the binary and the qml file that describes our screen output
-	tarCmd := exec.Command("tar", "-zc", "-f", filename, "main")
-	tarCmd.Run()
+		// ship the binary and the qml file that describes our screen output
+		tarCmd := exec.Command("tar", "-zc", "-f", filename, "main")
+		tarCmd.Run()
 
-	file, err := os.Open(filename)
+		file, err := os.Open(filename)
+		if err != nil {
+			s.Err.Panic("Could not read input file", err)
+		}
+		defer os.Remove(filename)
+	*/
+
+	file, err := os.Open(s.spreadFile)
 	if err != nil {
-		log.Panic("Could not read input file", err)
+		s.Err.Panic("Could not read input file", err)
 	}
-	defer os.Remove(filename)
+	defer file.Close()
 
 	req, err := http.NewRequest("POST", url, file)
 	if err != nil {
-		log.Println("POST error ", err)
+		s.Err.Println("POST error ", err)
 		return err
 	}
 
-	req.Header.Set("targetsegments", strconv.Itoa(s.targetSegments))
+	req.Header.Set("targetsegment", strconv.Itoa(s.targetSegments))
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		log.Println("POST error ", err)
+		s.Err.Println("POST error ", err)
 	} else {
 		io.Copy(ioutil.Discard, resp.Body)
 		resp.Body.Close()
@@ -354,12 +362,13 @@ func (s *Seg) tarFile() {
 	if err != nil {
 		s.Err.Println(err)
 	}
-
-	file, err := os.Open(filename)
-	if err != nil {
-		log.Panic("Could not read input file", err)
-	}
-	s.spreadFile = file
+	/*
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Panic("Could not read input file", err)
+		}
+	*/
+	s.spreadFile = filename
 }
 
 func (s *Seg) setTargetSegments(target int) {
@@ -445,9 +454,9 @@ func Run(wormPort, segPort, mode, spreadHost string, targetSegments int) {
 	switch mode {
 
 	case "spread":
-		//	s.tarFile()
+		s.tarFile()
 		s.sendSegment(spreadHost)
-		//		os.Remove(s.spreadFile.Name())
+		os.Remove(s.spreadFile)
 	case "run":
 		s.Info.Println("FUCK THE FUCK YE WE ARE STARTED")
 		s.StartSegmentServer()
