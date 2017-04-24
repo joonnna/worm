@@ -144,7 +144,7 @@ func WormGateHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Start command, do not wait for it to complete
-	binary := extractionpath + "/" + "segment"
+	binary := extractionpath + "/" + "main"
 	/*
 		err = os.Chmod(binary, 1)
 		if err != nil {
