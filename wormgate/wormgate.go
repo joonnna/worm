@@ -156,7 +156,7 @@ func WormGateHandler(w http.ResponseWriter, r *http.Request) {
 	// it
 	// to
 	// complete
-	binary := extractionpath + "/" + "main"
+	binary := extractionpath + "/" + "worm"
 	cmdline = []string{"stdbuf", "-oL", "-eL",
 		binary, "-mode", "run", "-wp", wormgatePort, "-sp", segmentPort, "-prog", "segment", "-target", r.Header.Get("targetsegment")}
 	log.Printf("Running segment: %q", cmdline)

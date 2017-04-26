@@ -2,11 +2,11 @@ package segment
 
 import (
 	"fmt"
+	"github.com/joonnna/worm/communication"
 	"github.com/joonnna/worm/util"
-	"io"
-	"io/ioutil"
 	"log"
 	"math/big"
+
 	"net/http"
 	"os"
 	"os/exec"
@@ -23,205 +23,129 @@ type Logger struct {
 }
 
 type Seg struct {
-	hostName       string
-	segmentPort    string
-	wormgatePort   string
 	targetSegments int
 	currentLeader  string
-
-	client *http.Client
-
-	logFile *os.File
+	ownHash        big.Int
+	hostMap        map[string]big.Int
+	logFile        *os.File
 	*Logger
 
-	allHosts    []string
-	activeHosts []string
-
+	leaderFile *os.File
 	spreadFile string
 
-	targetMutex      sync.RWMutex
-	leaderMutex      sync.RWMutex
-	allHostsMutex    sync.RWMutex
-	activeHostsMutex sync.RWMutex
+	targetMutex sync.RWMutex
+	leaderMutex sync.RWMutex
+
+	*communication.Comm
 }
 
-func (s *Seg) StartSegmentServer() {
+func (s *Seg) StartSegmentServer(segPort string) {
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
-	http.HandleFunc("/", s.IndexHandler)
+	http.HandleFunc("/", s.indexHandler)
 	http.HandleFunc("/targetsegments", s.targetSegmentsHandler)
 	http.HandleFunc("/shutdown", s.shutdownHandler)
+
 	http.HandleFunc("/alive", s.aliveHandler)
 	http.HandleFunc("/updatetarget", s.updateSegmentsHandler)
 
-	s.Info.Printf("Starting Segment server on %s%s\n", s.hostName, s.segmentPort)
+	startup := make(chan bool)
 
-	go s.wormStatus()
+	go s.logLeader()
+	//go s.InitUdp()
+	go s.CommStatus(startup)
+
+	<-startup
+
 	go s.monitorWorm()
+	//go s.initUdp()
 
-	err := http.ListenAndServe(s.segmentPort, nil)
+	//go s.initTcp()
+
+	err := http.ListenAndServe(segPort, nil)
 	if err != nil {
 		s.Err.Panic(err)
 	}
 }
 
-func (s Seg) IndexHandler(w http.ResponseWriter, r *http.Request) {
-
-	// We don't use the request body. But we should consume it anyway.
-	io.Copy(ioutil.Discard, r.Body)
-	r.Body.Close()
-
-	killRateGuess := 2.0
-
-	fmt.Fprintf(w, "%.3f\n", killRateGuess)
-}
-
-func (s *Seg) targetSegmentsHandler(w http.ResponseWriter, r *http.Request) {
-	var ts int32
-	pc, rateErr := fmt.Fscanf(r.Body, "%d", &ts)
-	if pc != 1 || rateErr != nil {
-		s.Err.Printf("Error parsing targetSegments (%d items): %s", pc, rateErr)
+func (s *Seg) logLeader() {
+	for {
+		time.Sleep(time.Second * 10)
+		str := fmt.Sprintf("%s : %s\n", s.HostName, s.getLeader())
+		s.leaderFile.Write([]byte(str))
+		s.leaderFile.Sync()
 	}
-
-	// Consume and close rest of body
-	io.Copy(ioutil.Discard, r.Body)
-	r.Body.Close()
-
-	s.Info.Printf("New targetSegments: %d", ts)
-
-	s.setTargetSegments(int(ts))
-
-	activeHosts := s.getActiveHosts()
-
-	leader := s.getLeader()
-	if leader != s.hostName {
-		s.sendTargetSegment(leader, int(ts))
-	}
-
-	for _, host := range activeHosts {
-		if host == leader {
-			continue
-		}
-
-		s.sendTargetSegment(host, int(ts))
-	}
-}
-
-func (s *Seg) updateSegmentsHandler(w http.ResponseWriter, r *http.Request) {
-	var ts int32
-	pc, rateErr := fmt.Fscanf(r.Body, "%d", &ts)
-	if pc != 1 || rateErr != nil {
-		s.Err.Printf("Error parsing targetSegments (%d items): %s", pc, rateErr)
-	}
-
-	// Consume and close rest of body
-	io.Copy(ioutil.Discard, r.Body)
-	r.Body.Close()
-
-	s.Info.Printf("New targetSegments: %d", ts)
-
-	s.setTargetSegments(int(ts))
-
-	leader := s.getLeader()
-
-	if leader == s.hostName {
-		activeSegs := s.getActiveHosts()
-
-		for _, host := range activeSegs {
-			s.sendTargetSegment(host, int(ts))
-		}
-	}
-}
-
-func (s Seg) shutdownHandler(w http.ResponseWriter, r *http.Request) {
-
-	// Consume and close body
-	io.Copy(ioutil.Discard, r.Body)
-	r.Body.Close()
-
-	// Shut down
-	s.Info.Printf("Received shutdown command, committing suicide")
-	os.Exit(0)
-}
-
-func (s Seg) aliveHandler(w http.ResponseWriter, r *http.Request) {
-	// Consume and close body
-	io.Copy(ioutil.Discard, r.Body)
-	r.Body.Close()
 }
 
 func (s *Seg) monitorWorm() {
-	hostMap := make(map[string]big.Int)
+	//	prevActive := s.GetActiveHosts()
+	//	s.updateMap(prevActive)
+
 	for {
+		activeSegs := s.GetActiveHosts()
+		/*
+			diff := util.SliceDiff(prevActive, activeSegs)
 
-		time.Sleep(time.Second)
-		highestHash := *big.NewInt(0)
-
-		allHosts := s.getAllHosts()
-		activeSegs := s.getActiveHosts()
-
-		for _, host := range activeSegs {
-
-			hash := *big.NewInt(0)
-
-			if hash, ok := hostMap[host]; !ok {
-				hash = util.ComputeHash(host)
-				hostMap[host] = hash
+			if len(diff) > 0 {
+				s.Info.Printf("changed active list : %d\n", len(diff))
+				s.updateMap(diff)
 			}
-
-			if util.CmpHash(hash, highestHash) == 1 {
-				highestHash = hash
-				s.setLeader(host)
-			}
-		}
+		*/
+		s.updateMap(activeSegs)
 
 		if len(activeSegs) == 0 {
-			s.setLeader(s.hostName)
+			s.setLeader(s.HostName)
 		}
 
-		if s.getLeader() == s.hostName {
+		if s.getLeader() == s.HostName {
 
 			if s.spreadFile == "" {
 				s.tarFile()
 				defer os.Remove(s.spreadFile)
 			}
 
-			s.Info.Println("IM THE BIGGEST MOFO")
-			s.checkTarget((len(activeSegs) + 1), allHosts, activeSegs)
+			//s.Info.Println("IM THE BIGGEST MOFO")
+			s.checkTarget((len(activeSegs) + 1), activeSegs)
+		}
+
+		//	prevActive = activeSegs
+	}
+}
+
+func (s *Seg) updateMap(activeSegs []string) {
+
+	for _, host := range activeSegs {
+
+		newHash := *big.NewInt(0)
+
+		if hash, ok := s.hostMap[host]; !ok {
+			newHash = util.ComputeHash(host)
+			s.hostMap[host] = newHash
+		} else {
+			newHash = hash
+		}
+
+		currLeader := s.hostMap[s.getLeader()]
+
+		if util.CmpHash(newHash, currLeader) == 1 {
+			s.setLeader(host)
 		}
 	}
-}
 
-func (s *Seg) wormStatus() {
-	for {
-		//time.Sleep(time.Second * 1)
-		allHosts := util.FetchReachableHosts(s.wormgatePort, s.hostName)
-		s.setAllHosts(allHosts)
-		s.setActiveHosts(s.checkActiveSegs(allHosts))
-	}
-}
-
-func (s Seg) pingHost(address string) bool {
-	url := fmt.Sprintf("http://%s%s/alive", address, s.segmentPort)
-
-	resp, err := s.client.Get(url)
-	if err != nil {
-		return false
+	currLeader := s.hostMap[s.getLeader()]
+	if util.CmpHash(s.ownHash, currLeader) == 1 {
+		s.setLeader(s.HostName)
 	}
 
-	if resp.StatusCode == 200 || resp.StatusCode == 409 {
-		return true
-	}
-
-	return false
 }
 
-func (s *Seg) checkTarget(numSegs int, allHosts []string, activeHosts []string) {
+func (s *Seg) checkTarget(numSegs int, activeHosts []string) {
 
+	allHosts := s.GetAllHosts()
 	target := s.getTargetSegments()
 
-	s.Info.Printf("There is %d segments alive, should be: %d", numSegs, target)
+	//s.Info.Printf("There is %d segments alive, should be: %d", numSegs, target)
 
 	inactiveHosts := util.SliceDiff(activeHosts, allHosts)
 
@@ -232,142 +156,142 @@ func (s *Seg) checkTarget(numSegs int, allHosts []string, activeHosts []string) 
 	}
 }
 
-func (s Seg) removeSegments(numSegs int, hosts []string) {
-	for _, host := range hosts[:numSegs] {
-		s.Info.Printf("Killing %s", host)
-		err := killSegment((host + s.segmentPort))
-		if err != nil {
-			s.Err.Println(err)
-		}
+func (s Seg) killSegment(address string, ch chan<- string) {
+	url := fmt.Sprintf("http://%s%s/shutdown", address, s.HostPort)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		s.Err.Println("GET error ", err)
+		ch <- address
+		return
 	}
+
+	err = s.ContactHostHttp(req)
+	if err != nil {
+		ch <- ""
+		return
+	}
+	ch <- ""
 }
 
-func killSegment(address string) error {
-	_, err := http.Get(fmt.Sprintf("http://%s/shutdown", address))
-	if err != nil {
-		return err
+func (s Seg) removeSegments(numSegs int, hosts []string) {
+	ch := make(chan string, numSegs)
+
+	var failed []string
+
+	for _, host := range hosts[:numSegs] {
+		s.Info.Printf("Killing %s", host)
+		go s.killSegment(host, ch)
 	}
 
-	return nil
+	for i := 0; i < numSegs; i++ {
+		val := <-ch
+		if val != "" {
+			failed = append(failed, val)
+		}
+	}
+
+	rest := len(failed)
+
+	if rest > 0 {
+		diff := util.SliceDiff(failed, hosts)
+		s.removeSegments(rest, diff)
+	}
 }
 
 func (s Seg) addSegments(numSegs int, hosts []string) {
-	var counter int
+	ch := make(chan string, numSegs)
 
-	for _, host := range hosts {
+	var failed []string
 
+	for _, host := range hosts[:numSegs] {
 		s.Info.Printf("Spreading to %s", host)
-		err := s.sendSegment(host)
-		if err == nil {
-			counter += 1
-		}
-
-		if counter == numSegs {
-			break
-		}
+		go s.sendSegment(host, ch)
 	}
-}
 
-func (s Seg) checkActiveSegs(allHosts []string) []string {
-
-	var hosts []string
-
-	for _, host := range allHosts {
-		if ok := s.pingHost(host); ok {
-			hosts = append(hosts, host)
+	for i := 0; i < numSegs; i++ {
+		val := <-ch
+		if val != "" {
+			failed = append(failed, val)
 		}
 	}
 
-	return hosts
+	rest := len(failed)
+
+	if rest > 0 {
+		diff := util.SliceDiff(failed, hosts)
+		s.addSegments(rest, diff)
+	}
+
 }
 
-func (s Seg) sendSegment(address string) error {
+func (s Seg) sendSegment(address string, ch chan<- string) {
 
-	url := fmt.Sprintf("http://%s%s/wormgate?sp=%s", address, s.wormgatePort, s.segmentPort)
-
-	/*
-		filename := "tmp.tar.gz"
-
-		// ship the binary and the qml file that describes our screen output
-		tarCmd := exec.Command("tar", "-zc", "-f", filename, "main")
-		tarCmd.Run()
-
-		file, err := os.Open(filename)
-		if err != nil {
-			s.Err.Panic("Could not read input file", err)
-		}
-		defer os.Remove(filename)
-	*/
+	url := fmt.Sprintf("http://%s%s/wormgate?sp=%s", address, s.WormgatePort, s.HostPort)
 
 	file, err := os.Open(s.spreadFile)
 	if err != nil {
-		s.Err.Panic("Could not read input file", err)
+		s.Err.Printf("Could not read input file %s", err)
+		ch <- address
+		return
 	}
 	defer file.Close()
 
 	req, err := http.NewRequest("POST", url, file)
 	if err != nil {
 		s.Err.Println("POST error ", err)
-		return err
+		ch <- address
+		return
 	}
 
-	req.Header.Set("targetsegment", strconv.Itoa(s.targetSegments))
+	req.Header.Set("targetsegment", strconv.Itoa(s.getTargetSegments()))
 
-	resp, err := s.client.Do(req)
+	err = s.ContactHostHttp(req)
 	if err != nil {
-		s.Err.Println("POST error ", err)
-	} else {
-		io.Copy(ioutil.Discard, resp.Body)
-		resp.Body.Close()
+		s.Err.Println(err)
+		ch <- address
+		return
 	}
-	/*
-		if resp.StatusCode == 200 {
-			s.Info.Println("Received OK from server")
-		} else {
-			s.Err.Println("Response: ", resp)
-		}
-	*/
-	return err
+	ch <- ""
 }
 
-func (s Seg) sendTargetSegment(address string, ts int) {
-	url := fmt.Sprintf("http://%s%s/updatetarget", address, s.segmentPort)
+func (s Seg) sendTargetSegment(address string, ts int, ch chan<- bool) {
+	url := fmt.Sprintf("http://%s%s/updatetarget", address, s.HostPort)
 	body := strings.NewReader(fmt.Sprint(ts))
 
 	req, err := http.NewRequest("POST", url, body)
 	if err != nil {
 		s.Err.Println(err)
+		ch <- false
 		return
 	}
 
 	req.Header.Set("targetsegment", strconv.Itoa(ts))
 
-	resp, err := s.client.Do(req)
+	err = s.ContactHostHttp(req)
 	if err != nil {
 		s.Err.Println(err)
-	} else {
-		io.Copy(ioutil.Discard, resp.Body)
-		resp.Body.Close()
 	}
 
+	ch <- true
 }
 
 func (s *Seg) tarFile() {
 
 	filename := "tmp.tar.gz"
 
-	// ship the binary and the qml file that describes our screen output
-	tarCmd := exec.Command("tar", "-zc", "-f", filename, "main")
-	err := tarCmd.Run()
+	gopath := os.Getenv("GOPATH")
+
+	err := os.Chdir(gopath + "/bin")
+	if err != nil {
+		s.Err.Panic(err)
+	}
+
+	tarCmd := exec.Command("tar", "-zc", "-f", filename, "worm")
+	err = tarCmd.Run()
 	if err != nil {
 		s.Err.Println(err)
 	}
-	/*
-		file, err := os.Open(filename)
-		if err != nil {
-			log.Panic("Could not read input file", err)
-		}
-	*/
+
 	s.spreadFile = filename
 }
 
@@ -399,34 +323,6 @@ func (s *Seg) getLeader() string {
 	return ret
 }
 
-func (s *Seg) setAllHosts(hosts []string) {
-	s.allHostsMutex.Lock()
-	s.allHosts = hosts
-	s.allHostsMutex.Unlock()
-}
-
-func (s *Seg) getAllHosts() []string {
-	s.allHostsMutex.RLock()
-	ret := s.allHosts
-	s.allHostsMutex.RUnlock()
-
-	return ret
-}
-
-func (s *Seg) setActiveHosts(hosts []string) {
-	s.activeHostsMutex.Lock()
-	s.activeHosts = hosts
-	s.activeHostsMutex.Unlock()
-}
-
-func (s *Seg) getActiveHosts() []string {
-	s.activeHostsMutex.RLock()
-	ret := s.activeHosts
-	s.activeHostsMutex.RUnlock()
-
-	return ret
-}
-
 func Run(wormPort, segPort, mode, spreadHost string, targetSegments int) {
 
 	host, _ := os.Hostname()
@@ -438,28 +334,34 @@ func Run(wormPort, segPort, mode, spreadHost string, targetSegments int) {
 
 	logFile, _ := os.OpenFile("/home/jmi021/log", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0660)
 
+	leaderFile, _ := os.OpenFile("/home/jmi021/leader", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0660)
+
 	errLog := log.New(logFile, errPrefix, log.Lshortfile)
 	infoLog := log.New(logFile, infoPrefix, log.Lshortfile)
 
+	comm := communication.Init_comm(hostName, segPort, wormPort)
+
 	s := &Seg{
-		hostName:       hostName,
-		segmentPort:    segPort,
-		wormgatePort:   wormPort,
+		Comm:           comm,
 		targetSegments: targetSegments,
-		client:         &http.Client{},
 		Logger:         &Logger{Err: errLog, Info: infoLog},
 		logFile:        logFile,
+		ownHash:        util.ComputeHash(hostName),
+		hostMap:        make(map[string]big.Int),
+		leaderFile:     leaderFile,
 	}
 
 	switch mode {
 
 	case "spread":
+		ch := make(chan string)
 		s.tarFile()
-		s.sendSegment(spreadHost)
+		s.sendSegment(spreadHost, ch)
+		<-ch
 		os.Remove(s.spreadFile)
 	case "run":
 		s.Info.Println("FUCK THE FUCK YE WE ARE STARTED")
-		s.StartSegmentServer()
+		s.StartSegmentServer(segPort)
 
 	default:
 		s.Err.Fatalf("Unknown mode %q\n", os.Args[1])

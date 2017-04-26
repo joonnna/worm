@@ -1,4 +1,3 @@
-
 package util
 
 import (
@@ -25,16 +24,6 @@ func ComputeHash(addr string) big.Int {
 
 func CmpHash(h1, h2 big.Int) int {
 	return h1.Cmp(&h2)
-	/*
-	   if cmp == 1 {
-	       return true
-	   } else if cmp == -1 {
-	       return false
-	   } else {
-	       log.Fatal("Equal hash values?!")
-	       return false
-	   }
-	*/
 }
 
 func FetchReachableHosts(port, hostName string) []string {
