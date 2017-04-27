@@ -1,9 +1,9 @@
-package visualize
+package main
 
 import (
 	"bufio"
 	"bytes"
-	_ "flag"
+	"flag"
 	"fmt"
 	"github.com/joonnna/worm/rocks"
 	"io"
@@ -64,15 +64,11 @@ func createClient() *http.Client {
 	}
 }
 
-func Run(wormPort, segPort string) {
-	/*
-		flag.StringVar(&wormgatePort, "wp", ":8181", "wormgate port (prefix with colon)")
-		flag.StringVar(&segmentPort, "sp", ":8182", "segment port (prefix with colon)")
-		flag.Parse()
-	*/
+func main() {
 
-	wormgatePort = wormPort
-	segmentPort = segPort
+	flag.StringVar(&wormgatePort, "wp", ":8181", "wormgate port (prefix with colon)")
+	flag.StringVar(&segmentPort, "sp", ":8182", "segment port (prefix with colon)")
+	flag.Parse()
 
 	nodes := rocks.ListNodes()
 

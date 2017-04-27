@@ -1,6 +1,8 @@
 package communication
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"github.com/joonnna/worm/util"
 	"io"
@@ -26,14 +28,22 @@ type Comm struct {
 
 	allHostsMutex    sync.RWMutex
 	activeHostsMutex sync.RWMutex
+
+	getTarget func() int
 }
 
-func Init_comm(HostName, hostPort, wormgatePort string) *Comm {
+type Message struct {
+	Addr      string
+	TargetSeg int
+}
+
+func InitComm(HostName, hostPort, wormgatePort string, get func() int) *Comm {
 	c := &Comm{
 		HostName:     HostName,
 		WormgatePort: wormgatePort,
 		HostPort:     hostPort,
 		client:       &http.Client{},
+		getTarget:    get,
 	}
 
 	return c
@@ -44,8 +54,10 @@ func (c *Comm) CommStatus(ch chan<- bool) {
 
 	for {
 		allHosts := util.FetchReachableHosts(c.WormgatePort, c.HostName)
-		currHosts := c.GetAllHosts()
 
+		c.setAllHosts(allHosts)
+
+		currHosts := c.GetAllHosts()
 		diff := util.SliceDiff(currHosts, allHosts)
 		if len(diff) > 0 {
 			c.setAllHosts(allHosts)
@@ -53,12 +65,12 @@ func (c *Comm) CommStatus(ch chan<- bool) {
 
 		active := c.PingHosts()
 
+		c.setActiveHosts(active)
 		activeDiff := util.SliceDiff(c.GetActiveHosts(), active)
 
 		if len(activeDiff) > 0 {
 			c.setActiveHosts(active)
 		}
-
 		if startup {
 			ch <- true
 			startup = false
@@ -83,10 +95,30 @@ func (c *Comm) PingHosts() []string {
 
 	var activeHosts []string
 
-	ch := make(chan string, len(activeHosts))
+	ch := make(chan string, len(hosts))
+
+	msg := &Message{
+		Addr:      c.HostName,
+		TargetSeg: c.getTarget(),
+	}
+
+	marsh, err := json.Marshal(msg)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	buf := bytes.NewBuffer(marsh)
+
+	err = json.NewEncoder(buf).Encode(msg)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	data := buf.Bytes()
 
 	for _, addr := range hosts {
-		go c.doPing(addr, ch)
+		reader := bytes.NewReader(data)
+		go c.doPing(addr, ch, reader)
 	}
 
 	for i := 0; i < len(hosts); i++ {
@@ -96,6 +128,25 @@ func (c *Comm) PingHosts() []string {
 		}
 	}
 	return activeHosts
+}
+
+func (c Comm) doPing(addr string, ch chan<- string, body *bytes.Reader) {
+	url := fmt.Sprintf("http://%s%s/alive", addr, c.HostPort)
+
+	resp, err := c.client.Post(url, "application/json", body)
+	if err != nil {
+		ch <- ""
+		return
+	}
+
+	if resp.StatusCode == 200 || resp.StatusCode == 409 {
+		ch <- addr
+	}
+
+	io.Copy(ioutil.Discard, resp.Body)
+	resp.Body.Close()
+
+	ch <- ""
 }
 
 func (c *Comm) InitUdp() {
@@ -145,6 +196,7 @@ func (c Comm) udpPing(addr string, ch chan<- string) {
 	data := make([]byte, 128)
 
 	t := time.Now()
+
 	conn.SetReadDeadline(t.Add(time.Millisecond * 1))
 
 	bytes, err := conn.Read(data)
@@ -158,24 +210,6 @@ func (c Comm) udpPing(addr string, ch chan<- string) {
 		ch <- ""
 	}
 
-}
-
-func (c Comm) doPing(addr string, ch chan<- string) {
-	url := fmt.Sprintf("http://%s%s/alive", addr, c.HostPort)
-	resp, err := c.client.Get(url)
-	if err != nil {
-		ch <- ""
-		return
-	}
-
-	if resp.StatusCode == 200 || resp.StatusCode == 409 {
-		ch <- addr
-	}
-
-	io.Copy(ioutil.Discard, resp.Body)
-	resp.Body.Close()
-
-	ch <- ""
 }
 
 func (c *Comm) setAllHosts(hosts []string) {

@@ -1,7 +1,7 @@
-package wormgate
+package main
 
 import (
-	_ "flag"
+	"flag"
 	"fmt"
 	"github.com/joonnna/worm/rocks"
 	"io"
@@ -31,10 +31,11 @@ var runningSegment struct {
 	p *os.Process
 }
 
-func Run(wormPort string) {
+func main() {
 
-	//flag.Parse()
-	wormgatePort = wormPort
+	flag.StringVar(&wormgatePort, "wp", ":15333", "wormgateport")
+
+	flag.Parse()
 
 	allHosts = rocks.ListNodes()
 
@@ -47,10 +48,12 @@ func Run(wormPort string) {
 	}
 	log.Printf("Current user: %s\n", curuser.Username)
 
-	//path = *flag.String("path", "/tmp/wormgate-"+curuser.Username,
-	//	"where to store segment code")
+	path = *flag.String("path", "/tmp/wormgate-"+curuser.Username,
+		"where to store segment code")
 
-	path = "/tmp/wormgate-" + curuser.Username
+	//path = "/tmp/wormgate-" + curuser.Username
+
+	flag.Parse()
 
 	log.Printf("Changing working directory to " + path)
 	os.Chdir(path)
@@ -156,9 +159,9 @@ func WormGateHandler(w http.ResponseWriter, r *http.Request) {
 	// it
 	// to
 	// complete
-	binary := extractionpath + "/" + "worm"
+	binary := extractionpath + "/" + "segment"
 	cmdline = []string{"stdbuf", "-oL", "-eL",
-		binary, "-mode", "run", "-wp", wormgatePort, "-sp", segmentPort, "-prog", "segment", "-target", r.Header.Get("targetsegment")}
+		binary, "-mode", "run", "-wp", wormgatePort, "-sp", segmentPort, "-target", r.Header.Get("targetsegment")}
 	log.Printf("Running segment: %q", cmdline)
 	cmd := exec.Command(cmdline[0], cmdline[1:]...)
 	cmd.Stdout = os.Stdout

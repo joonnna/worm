@@ -1,12 +1,12 @@
-package segment
+package main
 
 import (
+	"flag"
 	"fmt"
 	"github.com/joonnna/worm/communication"
 	"github.com/joonnna/worm/util"
 	"log"
 	"math/big"
-
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,6 +29,8 @@ type Seg struct {
 	hostMap        map[string]big.Int
 	logFile        *os.File
 	*Logger
+
+	updateTime int64
 
 	leaderFile *os.File
 	spreadFile string
@@ -72,8 +74,11 @@ func (s *Seg) StartSegmentServer(segPort string) {
 func (s *Seg) logLeader() {
 	for {
 		time.Sleep(time.Second * 10)
-		str := fmt.Sprintf("%s : %s\n", s.HostName, s.getLeader())
+		//str := fmt.Sprintf("%s : %d : %s\n", s.HostName, s.getTargetSegments(), s.getLeader())
+		str := fmt.Sprintf("%s : %d : %s\n", s.HostName, s.getTargetSegments(), s.getLeader())
 		s.leaderFile.Write([]byte(str))
+		//str := strings.Join(s.GetActiveHosts(), " ")
+		//s.leaderFile.Write([]byte(fmt.Sprintf("%s : %s\n", s.HostName, str)))
 		s.leaderFile.Sync()
 	}
 }
@@ -98,22 +103,34 @@ func (s *Seg) monitorWorm() {
 			s.setLeader(s.HostName)
 		}
 
-		if s.getLeader() == s.HostName {
+		//if s.getLeader() == s.HostName {
 
-			if s.spreadFile == "" {
-				s.tarFile()
-				defer os.Remove(s.spreadFile)
-			}
-
-			//s.Info.Println("IM THE BIGGEST MOFO")
-			s.checkTarget((len(activeSegs) + 1), activeSegs)
+		if s.spreadFile == "" {
+			s.tarFile()
+			defer os.Remove(s.spreadFile)
 		}
+
+		//s.Info.Println("IM THE BIGGEST MOFO")
+
+		leader := s.getLeader()
+
+		for i, host := range activeSegs {
+			if host == leader {
+				activeSegs = append(activeSegs[:i], activeSegs[i+1:]...)
+			}
+		}
+
+		s.checkTarget((len(activeSegs) + 1), activeSegs)
+		//time.Sleep(time.Second * 1)
+		//}
 
 		//	prevActive = activeSegs
 	}
 }
 
 func (s *Seg) updateMap(activeSegs []string) {
+
+	highestHash := *big.NewInt(0)
 
 	for _, host := range activeSegs {
 
@@ -126,15 +143,13 @@ func (s *Seg) updateMap(activeSegs []string) {
 			newHash = hash
 		}
 
-		currLeader := s.hostMap[s.getLeader()]
-
-		if util.CmpHash(newHash, currLeader) == 1 {
+		if util.CmpHash(newHash, highestHash) == 1 {
+			highestHash = newHash
 			s.setLeader(host)
 		}
 	}
 
-	currLeader := s.hostMap[s.getLeader()]
-	if util.CmpHash(s.ownHash, currLeader) == 1 {
+	if util.CmpHash(s.ownHash, highestHash) == 1 {
 		s.setLeader(s.HostName)
 	}
 
@@ -216,7 +231,6 @@ func (s Seg) addSegments(numSegs int, hosts []string) {
 	}
 
 	rest := len(failed)
-
 	if rest > 0 {
 		diff := util.SliceDiff(failed, hosts)
 		s.addSegments(rest, diff)
@@ -286,7 +300,7 @@ func (s *Seg) tarFile() {
 		s.Err.Panic(err)
 	}
 
-	tarCmd := exec.Command("tar", "-zc", "-f", filename, "worm")
+	tarCmd := exec.Command("tar", "-zc", "-f", filename, "segment")
 	err = tarCmd.Run()
 	if err != nil {
 		s.Err.Println(err)
@@ -323,11 +337,27 @@ func (s *Seg) getLeader() string {
 	return ret
 }
 
-func Run(wormPort, segPort, mode, spreadHost string, targetSegments int) {
+func addFlags(flagset *flag.FlagSet, wormPort, segPort, mode, host *string, target *int) {
+	flagset.StringVar(wormPort, "wp", ":8181", "wormgate port (prefix with colon)")
+	flagset.StringVar(segPort, "sp", ":8182", "segment port (prefix with colon)")
+	flagset.StringVar(mode, "mode", "run", "segment mode")
+	flagset.StringVar(host, "host", "compute-1-0", "host to spread to")
+	flagset.IntVar(target, "target", 2, "segment target number")
+}
+
+func main() {
+
+	var hostName, segPort, wormPort, spreadHost, mode string
+	var targetSegments int
 
 	host, _ := os.Hostname()
 
-	hostName := strings.Split(host, ".")[0]
+	hostName = strings.Split(host, ".")[0]
+
+	args := flag.NewFlagSet("args", flag.ExitOnError)
+	addFlags(args, &wormPort, &segPort, &mode, &spreadHost, &targetSegments)
+
+	args.Parse(os.Args[1:])
 
 	errPrefix := fmt.Sprintf("\x1b[31m %s \x1b[0m", hostName)
 	infoPrefix := fmt.Sprintf("\x1b[32m %s \x1b[0m", hostName)
@@ -339,10 +369,7 @@ func Run(wormPort, segPort, mode, spreadHost string, targetSegments int) {
 	errLog := log.New(logFile, errPrefix, log.Lshortfile)
 	infoLog := log.New(logFile, infoPrefix, log.Lshortfile)
 
-	comm := communication.Init_comm(hostName, segPort, wormPort)
-
 	s := &Seg{
-		Comm:           comm,
 		targetSegments: targetSegments,
 		Logger:         &Logger{Err: errLog, Info: infoLog},
 		logFile:        logFile,
@@ -350,6 +377,9 @@ func Run(wormPort, segPort, mode, spreadHost string, targetSegments int) {
 		hostMap:        make(map[string]big.Int),
 		leaderFile:     leaderFile,
 	}
+
+	comm := communication.InitComm(hostName, segPort, wormPort, s.getTargetSegments)
+	s.Comm = comm
 
 	switch mode {
 
