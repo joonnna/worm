@@ -30,20 +30,25 @@ type Comm struct {
 	activeHostsMutex sync.RWMutex
 
 	getTarget func() int
+	setTarget func(int)
+	getLeader func() string
 }
 
 type Message struct {
 	Addr      string
 	TargetSeg int
+	KillWorm  bool
 }
 
-func InitComm(HostName, hostPort, wormgatePort string, get func() int) *Comm {
+func InitComm(HostName, hostPort, wormgatePort string, get func() int, set func(int), leader func() string) *Comm {
 	c := &Comm{
 		HostName:     HostName,
 		WormgatePort: wormgatePort,
 		HostPort:     hostPort,
 		client:       &http.Client{},
 		getTarget:    get,
+		setTarget:    set,
+		getLeader:    leader,
 	}
 
 	return c
@@ -57,20 +62,10 @@ func (c *Comm) CommStatus(ch chan<- bool) {
 
 		c.setAllHosts(allHosts)
 
-		currHosts := c.GetAllHosts()
-		diff := util.SliceDiff(currHosts, allHosts)
-		if len(diff) > 0 {
-			c.setAllHosts(allHosts)
-		}
-
-		active := c.PingHosts()
+		active := c.pingHosts()
 
 		c.setActiveHosts(active)
-		activeDiff := util.SliceDiff(c.GetActiveHosts(), active)
 
-		if len(activeDiff) > 0 {
-			c.setActiveHosts(active)
-		}
 		if startup {
 			ch <- true
 			startup = false
@@ -90,7 +85,7 @@ func (c Comm) ContactHostHttp(req *http.Request) error {
 	return err
 }
 
-func (c *Comm) PingHosts() []string {
+func (c *Comm) pingHosts() []string {
 	hosts := c.GetAllHosts()
 
 	var activeHosts []string
@@ -117,8 +112,8 @@ func (c *Comm) PingHosts() []string {
 	data := buf.Bytes()
 
 	for _, addr := range hosts {
-		reader := bytes.NewReader(data)
-		go c.doPing(addr, ch, reader)
+		//reader := bytes.NewReader(data)
+		go c.udpPing(addr, ch, data)
 	}
 
 	for i := 0; i < len(hosts); i++ {
@@ -159,12 +154,25 @@ func (c *Comm) InitUdp() {
 	c.UdpConn = conn
 
 	data := make([]byte, 1024)
-
 	for {
 		_, addr, err := conn.ReadFrom(data)
 		if err != nil {
 			fmt.Println(err)
 		} else {
+
+			reader := bytes.NewReader(data)
+
+			msg := &Message{}
+
+			err := json.NewDecoder(reader).Decode(msg)
+			if err != nil {
+				fmt.Println(err)
+			}
+
+			if msg.Addr == c.getLeader() || msg.TargetSeg == 0 {
+				c.setTarget(msg.TargetSeg)
+			}
+
 			_, err = conn.WriteTo([]byte("alive"), addr)
 			if err != nil {
 				fmt.Println(err)
@@ -173,7 +181,7 @@ func (c *Comm) InitUdp() {
 	}
 }
 
-func (c Comm) udpPing(addr string, ch chan<- string) {
+func (c Comm) udpPing(addr string, ch chan<- string, data []byte) {
 
 	udpAddr, err := net.ResolveUDPAddr("udp", addr+":12332")
 	if err != nil {
@@ -187,19 +195,19 @@ func (c Comm) udpPing(addr string, ch chan<- string) {
 		return
 	}
 	defer conn.Close()
-	_, err = conn.Write([]byte("JAVELL DA"))
+	_, err = conn.Write(data)
 	if err != nil {
 		ch <- ""
 		return
 	}
 
-	data := make([]byte, 128)
+	response := make([]byte, 128)
 
 	t := time.Now()
 
-	conn.SetReadDeadline(t.Add(time.Millisecond * 1))
+	conn.SetReadDeadline(t.Add(time.Millisecond * 10))
 
-	bytes, err := conn.Read(data)
+	bytes, err := conn.Read(response)
 	if err == nil {
 		if bytes > 0 {
 			ch <- addr
@@ -214,13 +222,20 @@ func (c Comm) udpPing(addr string, ch chan<- string) {
 
 func (c *Comm) setAllHosts(hosts []string) {
 	c.allHostsMutex.Lock()
-	c.allHosts = hosts
+
+	tmp := make([]string, len(hosts))
+	copy(tmp, hosts)
+
+	c.allHosts = tmp
+
+	//c.allHosts = hosts
 	c.allHostsMutex.Unlock()
 }
 
 func (c *Comm) GetAllHosts() []string {
 	c.allHostsMutex.RLock()
-	ret := c.allHosts
+	ret := make([]string, len(c.allHosts))
+	copy(ret, c.allHosts)
 	c.allHostsMutex.RUnlock()
 
 	return ret
@@ -228,13 +243,22 @@ func (c *Comm) GetAllHosts() []string {
 
 func (c *Comm) setActiveHosts(hosts []string) {
 	c.activeHostsMutex.Lock()
-	c.activeHosts = hosts
+
+	tmp := make([]string, len(hosts))
+
+	copy(tmp, hosts)
+
+	c.activeHosts = tmp
 	c.activeHostsMutex.Unlock()
 }
 
 func (c *Comm) GetActiveHosts() []string {
 	c.activeHostsMutex.RLock()
-	ret := c.activeHosts
+
+	ret := make([]string, len(c.activeHosts))
+	copy(ret, c.activeHosts)
+
+	//ret := c.activeHosts
 	c.activeHostsMutex.RUnlock()
 
 	return ret

@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"github.com/joonnna/worm/communication"
 	"github.com/joonnna/worm/util"
+	"io/ioutil"
 	"log"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -30,10 +33,15 @@ type Seg struct {
 	logFile        *os.File
 	*Logger
 
+	httpListener net.Listener
+
 	updateTime int64
 
 	leaderFile *os.File
-	spreadFile string
+	//spreadFile string
+
+	spreadFile     []byte
+	spreadFileName string
 
 	targetMutex sync.RWMutex
 	leaderMutex sync.RWMutex
@@ -48,24 +56,29 @@ func (s *Seg) StartSegmentServer(segPort string) {
 	http.HandleFunc("/", s.indexHandler)
 	http.HandleFunc("/targetsegments", s.targetSegmentsHandler)
 	http.HandleFunc("/shutdown", s.shutdownHandler)
+	http.HandleFunc("/suicide", s.suicideHandler)
 
-	http.HandleFunc("/alive", s.aliveHandler)
+	//	http.HandleFunc("/alive", s.aliveHandler)
 	http.HandleFunc("/updatetarget", s.updateSegmentsHandler)
 
 	startup := make(chan bool)
 
+	go s.InitUdp()
 	go s.logLeader()
-	//go s.InitUdp()
 	go s.CommStatus(startup)
 
 	<-startup
 
 	go s.monitorWorm()
-	//go s.initUdp()
 
-	//go s.initTcp()
+	l, err := net.Listen("tcp", s.HostPort)
+	if err != nil {
+		s.Err.Panic(err)
+	}
 
-	err := http.ListenAndServe(segPort, nil)
+	s.httpListener = l
+
+	err = http.Serve(l, nil)
 	if err != nil {
 		s.Err.Panic(err)
 	}
@@ -75,7 +88,7 @@ func (s *Seg) logLeader() {
 	for {
 		time.Sleep(time.Second * 10)
 		//str := fmt.Sprintf("%s : %d : %s\n", s.HostName, s.getTargetSegments(), s.getLeader())
-		str := fmt.Sprintf("%s : %d : %s\n", s.HostName, s.getTargetSegments(), s.getLeader())
+		str := fmt.Sprintf("%s : %d : %s : %d\n", s.HostName, s.getTargetSegments(), s.getLeader(), len(s.GetActiveHosts()))
 		s.leaderFile.Write([]byte(str))
 		//str := strings.Join(s.GetActiveHosts(), " ")
 		//s.leaderFile.Write([]byte(fmt.Sprintf("%s : %s\n", s.HostName, str)))
@@ -84,53 +97,64 @@ func (s *Seg) logLeader() {
 }
 
 func (s *Seg) monitorWorm() {
-	//	prevActive := s.GetActiveHosts()
-	//	s.updateMap(prevActive)
-
 	for {
-		activeSegs := s.GetActiveHosts()
-		/*
-			diff := util.SliceDiff(prevActive, activeSegs)
+		//foundLeader := 0
 
-			if len(diff) > 0 {
-				s.Info.Printf("changed active list : %d\n", len(diff))
-				s.updateMap(diff)
-			}
-		*/
+		activeSegs := s.GetActiveHosts()
+
 		s.updateMap(activeSegs)
 
-		if len(activeSegs) == 0 {
+		numSegs := len(activeSegs)
+
+		if numSegs == 0 {
 			s.setLeader(s.HostName)
 		}
 
-		//if s.getLeader() == s.HostName {
-
-		if s.spreadFile == "" {
-			s.tarFile()
-			defer os.Remove(s.spreadFile)
-		}
-
-		//s.Info.Println("IM THE BIGGEST MOFO")
-
 		leader := s.getLeader()
 
-		for i, host := range activeSegs {
-			if host == leader {
-				activeSegs = append(activeSegs[:i], activeSegs[i+1:]...)
-			}
+		if s.HostName == leader && s.getTargetSegments() == 0 {
+			s.killWorm()
 		}
+		/*
+			for i, host := range activeSegs {
+				if host == leader {
+					activeSegs = append(activeSegs[:i], activeSegs[i+1:]...)
+					foundLeader = 1
+				}
+			}
+		*/
 
 		s.checkTarget((len(activeSegs) + 1), activeSegs)
-		//time.Sleep(time.Second * 1)
-		//}
-
-		//	prevActive = activeSegs
 	}
+}
+
+func (s *Seg) killWorm() {
+
+	s.Info.Println("Killing entire worm")
+
+	for {
+		activeSegs := s.GetActiveHosts()
+
+		numSegs := len(activeSegs)
+
+		if numSegs == 0 {
+			s.Info.Println("Worm Dead committing suicide")
+
+			os.Remove(s.spreadFileName)
+			s.httpListener.Close()
+
+			os.Exit(0)
+		}
+
+		s.removeSegments(numSegs, activeSegs)
+	}
+
 }
 
 func (s *Seg) updateMap(activeSegs []string) {
 
 	highestHash := *big.NewInt(0)
+	var leaderHost string
 
 	for _, host := range activeSegs {
 
@@ -145,18 +169,20 @@ func (s *Seg) updateMap(activeSegs []string) {
 
 		if util.CmpHash(newHash, highestHash) == 1 {
 			highestHash = newHash
-			s.setLeader(host)
+			leaderHost = host
 		}
 	}
 
 	if util.CmpHash(s.ownHash, highestHash) == 1 {
 		s.setLeader(s.HostName)
+	} else {
+		s.setLeader(leaderHost)
 	}
-
 }
 
 func (s *Seg) checkTarget(numSegs int, activeHosts []string) {
 
+	leader := s.getLeader()
 	allHosts := s.GetAllHosts()
 	target := s.getTargetSegments()
 
@@ -164,15 +190,26 @@ func (s *Seg) checkTarget(numSegs int, activeHosts []string) {
 
 	inactiveHosts := util.SliceDiff(activeHosts, allHosts)
 
+	//s.Info.Printf("%d : %d\n", target-numSegs, len(inactiveHosts))
+
+	availableNodes := len(inactiveHosts)
+
+	newTarget := target - numSegs
+
 	if target > numSegs {
-		s.addSegments((target - numSegs), inactiveHosts)
-	} else if target < numSegs {
+		if newTarget-availableNodes > 0 {
+			s.addSegments(availableNodes, inactiveHosts)
+		} else {
+			s.addSegments(newTarget, inactiveHosts)
+		}
+
+	} else if target < numSegs && leader == s.HostName {
 		s.removeSegments((numSegs - target), activeHosts)
 	}
 }
 
 func (s Seg) killSegment(address string, ch chan<- string) {
-	url := fmt.Sprintf("http://%s%s/shutdown", address, s.HostPort)
+	url := fmt.Sprintf("http://%s%s/suicide", address, s.HostPort)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		s.Err.Println("GET error ", err)
@@ -193,9 +230,13 @@ func (s Seg) removeSegments(numSegs int, hosts []string) {
 
 	var failed []string
 
+	leader := s.getLeader()
+
 	for _, host := range hosts[:numSegs] {
 		s.Info.Printf("Killing %s", host)
-		go s.killSegment(host, ch)
+		if host != leader {
+			go s.killSegment(host, ch)
+		}
 	}
 
 	for i := 0; i < numSegs; i++ {
@@ -239,18 +280,9 @@ func (s Seg) addSegments(numSegs int, hosts []string) {
 }
 
 func (s Seg) sendSegment(address string, ch chan<- string) {
-
 	url := fmt.Sprintf("http://%s%s/wormgate?sp=%s", address, s.WormgatePort, s.HostPort)
 
-	file, err := os.Open(s.spreadFile)
-	if err != nil {
-		s.Err.Printf("Could not read input file %s", err)
-		ch <- address
-		return
-	}
-	defer file.Close()
-
-	req, err := http.NewRequest("POST", url, file)
+	req, err := http.NewRequest("POST", url, bytes.NewReader(s.spreadFile))
 	if err != nil {
 		s.Err.Println("POST error ", err)
 		ch <- address
@@ -303,10 +335,25 @@ func (s *Seg) tarFile() {
 	tarCmd := exec.Command("tar", "-zc", "-f", filename, "segment")
 	err = tarCmd.Run()
 	if err != nil {
-		s.Err.Println(err)
+		s.Err.Panic(err)
 	}
 
-	s.spreadFile = filename
+	file, err := os.Open(filename)
+	if err != nil {
+		s.Err.Panic(err)
+	}
+
+	bytes, err := ioutil.ReadAll(file)
+	if err != nil {
+		s.Err.Panic(err)
+	}
+
+	s.spreadFile = bytes
+	s.spreadFileName = file.Name()
+
+	file.Close()
+
+	//s.spreadFile = filename
 }
 
 func (s *Seg) setTargetSegments(target int) {
@@ -378,21 +425,23 @@ func main() {
 		leaderFile:     leaderFile,
 	}
 
-	comm := communication.InitComm(hostName, segPort, wormPort, s.getTargetSegments)
+	comm := communication.InitComm(hostName, segPort, wormPort, s.getTargetSegments, s.setTargetSegments, s.getLeader)
 	s.Comm = comm
 
+	s.tarFile()
+
+	defer os.Remove(s.spreadFileName)
+
+	s.Info.Println("SATAN DA")
 	switch mode {
 
 	case "spread":
 		ch := make(chan string)
-		s.tarFile()
 		s.sendSegment(spreadHost, ch)
 		<-ch
-		os.Remove(s.spreadFile)
 	case "run":
 		s.Info.Println("FUCK THE FUCK YE WE ARE STARTED")
 		s.StartSegmentServer(segPort)
-
 	default:
 		s.Err.Fatalf("Unknown mode %q\n", os.Args[1])
 	}

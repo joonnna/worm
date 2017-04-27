@@ -20,7 +20,7 @@ func ListNodes() []string {
 	nodes := strings.Split(trimmed, "\n")
 
 	for i, node := range nodes {
-		if node == "compute-2-20" {
+		if node == "compute-2-20" || node == "compute-1-4" {
 			nodes = append(nodes[:i], nodes[i+1:]...)
 		}
 	}
