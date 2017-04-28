@@ -10,13 +10,13 @@ import (
 	"os"
 )
 
-func (s Seg) indexHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Seg) indexHandler(w http.ResponseWriter, r *http.Request) {
 
 	// We don't use the request body. But we should consume it anyway.
 	io.Copy(ioutil.Discard, r.Body)
 	r.Body.Close()
 
-	killRateGuess := 2.0
+	killRateGuess := s.GetKillRate()
 
 	fmt.Fprintf(w, "%.3f\n", killRateGuess)
 }
@@ -26,7 +26,7 @@ func (s *Seg) targetSegmentsHandler(w http.ResponseWriter, r *http.Request) {
 
 	defer r.Body.Close()
 
-	if s.getTargetSegments() == 0 {
+	if s.GetTargetSegments() == 0 {
 		io.Copy(ioutil.Discard, r.Body)
 		return
 	}
@@ -59,7 +59,7 @@ func (s *Seg) updateSegmentsHandler(w http.ResponseWriter, r *http.Request) {
 
 	defer r.Body.Close()
 
-	if s.getTargetSegments() == 0 {
+	if s.GetTargetSegments() == 0 {
 		io.Copy(ioutil.Discard, r.Body)
 		return
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/joonnna/worm/communication"
@@ -30,7 +31,8 @@ type Seg struct {
 	currentLeader  string
 	ownHash        big.Int
 	hostMap        map[string]big.Int
-	logFile        *os.File
+
+	logFile *os.File
 	*Logger
 
 	httpListener net.Listener
@@ -40,11 +42,18 @@ type Seg struct {
 	leaderFile *os.File
 	//spreadFile string
 
+	numStopped int
+	numKilled  int
+	killRate   float32
+
 	spreadFile     []byte
 	spreadFileName string
 
-	targetMutex sync.RWMutex
-	leaderMutex sync.RWMutex
+	targetMutex     sync.RWMutex
+	leaderMutex     sync.RWMutex
+	numKilledMutex  sync.RWMutex
+	numStoppedMutex sync.RWMutex
+	killRateMutex   sync.RWMutex
 
 	*communication.Comm
 }
@@ -63,7 +72,7 @@ func (s *Seg) StartSegmentServer(segPort string) {
 
 	startup := make(chan bool)
 
-	go s.InitUdp()
+	go s.initUdp()
 	go s.logLeader()
 	go s.CommStatus(startup)
 
@@ -87,8 +96,8 @@ func (s *Seg) StartSegmentServer(segPort string) {
 func (s *Seg) logLeader() {
 	for {
 		time.Sleep(time.Second * 10)
-		//str := fmt.Sprintf("%s : %d : %s\n", s.HostName, s.getTargetSegments(), s.getLeader())
-		str := fmt.Sprintf("%s : %d : %s : %d\n", s.HostName, s.getTargetSegments(), s.getLeader(), len(s.GetActiveHosts()))
+		//str := fmt.Sprintf("%s : %d : %s\n", s.HostName, s.GetTargetSegments(), s.getLeader())
+		str := fmt.Sprintf("%s : %d : %s : %d\n", s.HostName, s.GetTargetSegments(), s.getLeader(), len(s.GetActiveHosts()))
 		s.leaderFile.Write([]byte(str))
 		//str := strings.Join(s.GetActiveHosts(), " ")
 		//s.leaderFile.Write([]byte(fmt.Sprintf("%s : %s\n", s.HostName, str)))
@@ -97,10 +106,25 @@ func (s *Seg) logLeader() {
 }
 
 func (s *Seg) monitorWorm() {
+
+	activeSegs := s.GetActiveHosts()
+
 	for {
-		//foundLeader := 0
+		prev := len(activeSegs)
 
 		activeSegs := s.GetActiveHosts()
+
+		curr := len(activeSegs)
+
+		numDead := prev - curr
+
+		if numDead > 0 {
+			numKilled := numDead - s.getNumStopped()
+
+			if numKilled > 0 {
+				s.incrementNumKilled(numKilled)
+			}
+		}
 
 		s.updateMap(activeSegs)
 
@@ -112,17 +136,9 @@ func (s *Seg) monitorWorm() {
 
 		leader := s.getLeader()
 
-		if s.HostName == leader && s.getTargetSegments() == 0 {
+		if s.HostName == leader && s.GetTargetSegments() == 0 {
 			s.killWorm()
 		}
-		/*
-			for i, host := range activeSegs {
-				if host == leader {
-					activeSegs = append(activeSegs[:i], activeSegs[i+1:]...)
-					foundLeader = 1
-				}
-			}
-		*/
 
 		s.checkTarget((len(activeSegs) + 1), activeSegs)
 	}
@@ -175,6 +191,7 @@ func (s *Seg) updateMap(activeSegs []string) {
 
 	if util.CmpHash(s.ownHash, highestHash) == 1 {
 		s.setLeader(s.HostName)
+		go s.estimateKillRate()
 	} else {
 		s.setLeader(leaderHost)
 	}
@@ -184,7 +201,7 @@ func (s *Seg) checkTarget(numSegs int, activeHosts []string) {
 
 	leader := s.getLeader()
 	allHosts := s.GetAllHosts()
-	target := s.getTargetSegments()
+	target := s.GetTargetSegments()
 
 	//s.Info.Printf("There is %d segments alive, should be: %d", numSegs, target)
 
@@ -230,13 +247,10 @@ func (s Seg) removeSegments(numSegs int, hosts []string) {
 
 	var failed []string
 
-	leader := s.getLeader()
-
 	for _, host := range hosts[:numSegs] {
 		s.Info.Printf("Killing %s", host)
-		if host != leader {
-			go s.killSegment(host, ch)
-		}
+		s.incrementNumStopped(1)
+		go s.killSegment(host, ch)
 	}
 
 	for i := 0; i < numSegs; i++ {
@@ -289,7 +303,7 @@ func (s Seg) sendSegment(address string, ch chan<- string) {
 		return
 	}
 
-	req.Header.Set("targetsegment", strconv.Itoa(s.getTargetSegments()))
+	req.Header.Set("targetsegment", strconv.Itoa(s.GetTargetSegments()))
 
 	err = s.ContactHostHttp(req)
 	if err != nil {
@@ -319,6 +333,34 @@ func (s Seg) sendTargetSegment(address string, ts int, ch chan<- bool) {
 	}
 
 	ch <- true
+}
+
+func (s *Seg) estimateKillRate() {
+
+	startTime := time.Now().Second()
+	time.Sleep(time.Second * 5)
+
+	for {
+		leader := s.getLeader()
+		if leader != s.HostName {
+			return
+		}
+
+		endTime := time.Now().Second()
+
+		duration := endTime - startTime
+
+		killRate := float32(s.getNumKilled() / duration)
+
+		s.setKillRate(killRate)
+
+		startTime = endTime
+
+		s.resetNumKilled()
+		s.resetNumStopped()
+
+		time.Sleep(time.Second * 5)
+	}
 }
 
 func (s *Seg) tarFile() {
@@ -356,32 +398,95 @@ func (s *Seg) tarFile() {
 	//s.spreadFile = filename
 }
 
-func (s *Seg) setTargetSegments(target int) {
-	s.targetMutex.Lock()
-	s.targetSegments = target
-	s.targetMutex.Unlock()
+func (s Seg) httpPing(addr string, ch chan<- string, body *bytes.Reader) {
+	url := fmt.Sprintf("http://%s%s/alive", addr, s.HostPort)
+
+	req, _ := http.NewRequest("POST", url, body)
+
+	err := s.ContactHostHttp(req)
+	if err != nil {
+		ch <- ""
+		return
+	}
+
+	ch <- ""
 }
 
-func (s *Seg) getTargetSegments() int {
-	s.targetMutex.RLock()
-	ret := s.targetSegments
-	s.targetMutex.RUnlock()
+func (s *Seg) initUdp() {
 
-	return ret
+	conn, err := net.ListenPacket("udp", s.HostName+":12332")
+	if err != nil {
+		s.Err.Panic("Cant start udp")
+	}
+
+	data := make([]byte, 1024)
+	for {
+		_, addr, err := conn.ReadFrom(data)
+		if err != nil {
+			s.Err.Println(err)
+		} else {
+
+			reader := bytes.NewReader(data)
+
+			msg := &communication.Message{}
+
+			err := json.NewDecoder(reader).Decode(msg)
+			if err != nil {
+				s.Err.Println(err)
+			}
+
+			if msg.Addr == s.getLeader() {
+				s.setKillRate(msg.KillRate)
+				s.setTargetSegments(msg.TargetSeg)
+			} else if msg.TargetSeg == 0 {
+				s.setTargetSegments(msg.TargetSeg)
+			}
+
+			_, err = conn.WriteTo([]byte("alive"), addr)
+			if err != nil {
+				s.Err.Println(err)
+			}
+		}
+	}
 }
 
-func (s *Seg) setLeader(host string) {
-	s.leaderMutex.Lock()
-	s.currentLeader = host
-	s.leaderMutex.Unlock()
-}
+func (s Seg) Ping(addr string, ch chan<- string, data []byte) {
 
-func (s *Seg) getLeader() string {
-	s.leaderMutex.RLock()
-	ret := s.currentLeader
-	s.leaderMutex.RUnlock()
+	udpAddr, err := net.ResolveUDPAddr("udp", addr+":12332")
+	if err != nil {
+		ch <- ""
+		fmt.Println(err)
+		return
+	}
+	conn, err := net.DialUDP("udp", nil, udpAddr)
+	if err != nil {
+		ch <- ""
+		return
+	}
+	defer conn.Close()
+	_, err = conn.Write(data)
+	if err != nil {
+		ch <- ""
+		return
+	}
 
-	return ret
+	response := make([]byte, 128)
+
+	t := time.Now()
+
+	conn.SetReadDeadline(t.Add(time.Millisecond * 10))
+
+	bytes, err := conn.Read(response)
+	if err == nil {
+		if bytes > 0 {
+			ch <- addr
+		} else {
+			ch <- ""
+		}
+	} else {
+		ch <- ""
+	}
+
 }
 
 func addFlags(flagset *flag.FlagSet, wormPort, segPort, mode, host *string, target *int) {
@@ -425,7 +530,7 @@ func main() {
 		leaderFile:     leaderFile,
 	}
 
-	comm := communication.InitComm(hostName, segPort, wormPort, s.getTargetSegments, s.setTargetSegments, s.getLeader)
+	comm := communication.InitComm(hostName, segPort, wormPort, s)
 	s.Comm = comm
 
 	s.tarFile()
