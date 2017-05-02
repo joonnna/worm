@@ -46,6 +46,10 @@ func (s *Seg) listenUDP() {
 				s.setTargetSegments(msg.TargetSeg)
 			}
 
+			if ok := s.getPending(msg.Addr); ok {
+				s.deletePending(msg.Addr)
+			}
+
 			_, _ = conn.WriteTo([]byte("alive"), addr)
 		}
 	}

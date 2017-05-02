@@ -44,13 +44,15 @@ type Seg struct {
 	spreadFile     []byte
 	spreadFileName string
 
-	hostMap map[string]big.Int
+	hostMap    map[string]big.Int
+	pendingMap map[string]time.Time
 
 	numAddedMutex sync.RWMutex
 	addMapMutex   sync.RWMutex
 	targetMutex   sync.RWMutex
 	leaderMutex   sync.RWMutex
 	killRateMutex sync.RWMutex
+	pendingMutex  sync.RWMutex
 
 	*communication.Comm
 }
@@ -76,7 +78,7 @@ func (s *Seg) StartSegmentServer(segPort string) {
 	<-startup
 
 	go s.monitorWorm()
-
+	go s.checkPending()
 	l, err := net.Listen("tcp", s.HostPort)
 	if err != nil {
 		s.Err.Panic(err)
@@ -152,6 +154,23 @@ func (s *Seg) killWorm() {
 
 }
 
+func (s *Seg) checkPending() {
+
+	for {
+		time.Sleep(time.Second * 2)
+
+		s.pendingMutex.Lock()
+
+		for k, v := range s.pendingMap {
+			if time.Since(v).Seconds() > 1 {
+				delete(s.pendingMap, k)
+			}
+		}
+		s.pendingMutex.Unlock()
+	}
+
+}
+
 func (s *Seg) updateMap(activeSegs []string) {
 
 	highestHash := *big.NewInt(0)
@@ -193,7 +212,14 @@ func (s *Seg) checkTarget(numSegs int, activeHosts []string) {
 
 	newTarget := target - numSegs
 
+	pending := s.lenPending()
+
 	if target > numSegs {
+
+		if pending >= newTarget {
+			return
+		}
+
 		if newTarget-availableNodes > 0 {
 			s.addSegments(availableNodes, inactiveHosts)
 		} else {
@@ -251,7 +277,9 @@ func (s Seg) addSegments(numSegs int, hosts []string) {
 	var failed []string
 
 	for _, host := range hosts[:numSegs] {
+		s.setPending(host)
 		go s.sendSegment(host, ch)
+
 	}
 
 	for i := 0; i < numSegs; i++ {
@@ -405,6 +433,7 @@ func main() {
 		ownHash:        util.ComputeHash(hostName),
 		leaderFile:     leaderFile,
 		hostMap:        make(map[string]big.Int),
+		pendingMap:     make(map[string]time.Time),
 	}
 
 	comm := communication.InitComm(hostName, segPort, wormPort, s)
