@@ -80,7 +80,6 @@ func (c *Comm) setAllHosts(hosts []string) {
 
 	c.allHosts = tmp
 
-	//c.allHosts = hosts
 	c.allHostsMutex.Unlock()
 }
 
@@ -110,7 +109,6 @@ func (c *Comm) GetActiveHosts() []string {
 	ret := make([]string, len(c.activeHosts))
 	copy(ret, c.activeHosts)
 
-	//ret := c.activeHosts
 	c.activeHostsMutex.RUnlock()
 
 	return ret

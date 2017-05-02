@@ -226,7 +226,7 @@ func killSegmentHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Killed segment process %d\n", pid)
 	} else {
 		msg := "No segment process to kill\n"
-		log.Printf(msg)
+		//log.Printf(msg)
 		fmt.Fprintf(w, msg)
 	}
 	runningSegment.Unlock()

@@ -39,25 +39,18 @@ type Seg struct {
 	udpConn      net.PacketConn
 	httpListener net.Listener
 
-	numStopped int
-	numKilled  int
-	killRate   float32
+	killRate float32
 
 	spreadFile     []byte
 	spreadFileName string
 
-	numAdded int
-	addMap   map[string]int
-	hostMap  map[string]big.Int
+	hostMap map[string]big.Int
 
 	numAddedMutex sync.RWMutex
 	addMapMutex   sync.RWMutex
 	targetMutex   sync.RWMutex
 	leaderMutex   sync.RWMutex
-
-	numKilledMutex  sync.RWMutex
-	numStoppedMutex sync.RWMutex
-	killRateMutex   sync.RWMutex
+	killRateMutex sync.RWMutex
 
 	*communication.Comm
 }
@@ -72,13 +65,12 @@ func (s *Seg) StartSegmentServer(segPort string) {
 	http.HandleFunc("/shutdown", s.shutdownHandler)
 	http.HandleFunc("/suicide", s.suicideHandler)
 
-	//http.HandleFunc("/alive", s.aliveHandler)
 	http.HandleFunc("/updatetarget", s.updateSegmentsHandler)
 
 	startup := make(chan bool)
 
 	go s.listenUDP()
-	go s.logLeader()
+	//go s.logLeader()
 	go s.CommStatus(startup)
 
 	<-startup
@@ -102,7 +94,7 @@ func (s *Seg) logLeader() {
 	for {
 		time.Sleep(time.Second * 10)
 		//str := fmt.Sprintf("%s : %d : %s\n", s.HostName, s.getTargetSegments(), s.getLeader())
-		str := fmt.Sprintf("%s : %d : %s : %d : %d\n", s.HostName, s.getTargetSegments(), s.getLeader(), len(s.GetActiveHosts()), s.getNumAdded())
+		str := fmt.Sprintf("%s : %d : %s : %d : %f\n", s.HostName, s.getTargetSegments(), s.getLeader(), len(s.GetActiveHosts()), s.getKillRate())
 		s.leaderFile.Write([]byte(str))
 		//str := strings.Join(s.GetActiveHosts(), " ")
 		//s.leaderFile.Write([]byte(fmt.Sprintf("%s : %s\n", s.HostName, str)))
@@ -195,11 +187,7 @@ func (s *Seg) checkTarget(numSegs int, activeHosts []string) {
 	allHosts := s.GetAllHosts()
 	target := s.getTargetSegments()
 
-	//s.Info.Printf("There is %d segments alive, should be: %d", numSegs, target)
-
 	inactiveHosts := util.SliceDiff(activeHosts, allHosts)
-
-	//s.Info.Printf("%d : %d\n", target-numSegs, len(inactiveHosts))
 
 	availableNodes := len(inactiveHosts)
 
@@ -221,7 +209,6 @@ func (s Seg) killSegment(address string, ch chan<- string) {
 	url := fmt.Sprintf("http://%s%s/suicide", address, s.HostPort)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		s.Err.Println("GET error ", err)
 		ch <- address
 		return
 	}
@@ -258,7 +245,7 @@ func (s Seg) removeSegments(numSegs int, hosts []string) {
 	}
 }
 
-func (s *Seg) addSegments(numSegs int, hosts []string) {
+func (s Seg) addSegments(numSegs int, hosts []string) {
 	ch := make(chan string, numSegs)
 
 	var failed []string
@@ -271,8 +258,6 @@ func (s *Seg) addSegments(numSegs int, hosts []string) {
 		val := <-ch
 		if val != "" {
 			failed = append(failed, val)
-		} else {
-			s.incrementNumAdded()
 		}
 	}
 
@@ -289,7 +274,6 @@ func (s *Seg) sendSegment(address string, ch chan<- string) {
 
 	req, err := http.NewRequest("POST", url, bytes.NewReader(s.spreadFile))
 	if err != nil {
-		s.Err.Println("POST error ", err)
 		ch <- address
 		return
 	}
@@ -298,7 +282,6 @@ func (s *Seg) sendSegment(address string, ch chan<- string) {
 
 	err = s.ContactHostHttp(req)
 	if err != nil {
-		s.Err.Println(err)
 		ch <- address
 		return
 	}
@@ -311,7 +294,6 @@ func (s Seg) sendTargetSegment(address string, ts int, ch chan<- bool) {
 
 	req, err := http.NewRequest("POST", url, body)
 	if err != nil {
-		s.Err.Println(err)
 		ch <- false
 		return
 	}
@@ -327,49 +309,28 @@ func (s Seg) sendTargetSegment(address string, ts int, ch chan<- bool) {
 }
 
 func (s *Seg) estimateKillRate() {
-	var newStart bool
-	var curr, numAdded int
-	var active []string
-	var start time.Time
 
-	newStart = true
+	active := s.GetActiveHosts()
+	prev := len(active)
+
+	time.Sleep(time.Second)
 
 	for {
-		if newStart {
-			active = s.GetActiveHosts()
-			curr = len(active)
-			start = time.Now()
-			newStart = false
+
+		active := s.GetActiveHosts()
+		curr := len(active)
+
+		diff := prev - curr
+
+		if diff > 0 {
+			killRate := float32(diff)
+			s.setKillRate(killRate)
 		}
 
-		numAdded += s.calcAdded()
+		prev = curr
 
-		dur := time.Since(start)
-
-		if dur.Seconds() > 5 {
-			active = s.GetActiveHosts()
-			prev := len(active)
-			diff := prev - curr
-			s.calcKillRate(diff, numAdded)
-			newStart = true
-		}
-
-		s.resetNumAdded()
-
+		time.Sleep(time.Second)
 	}
-}
-
-func (s *Seg) calcKillRate(diff, numAdded int) {
-
-	if diff > 0 {
-		killRate := float32((diff + numAdded) / 5)
-		s.setKillRate(killRate)
-	}
-
-	s.Info.Println("DSADASD")
-	s.Info.Println(diff)
-	s.Info.Println(numAdded)
-	s.resetAddMap()
 }
 
 func (s *Seg) tarFile() {
@@ -443,7 +404,6 @@ func main() {
 		logFile:        logFile,
 		ownHash:        util.ComputeHash(hostName),
 		leaderFile:     leaderFile,
-		addMap:         make(map[string]int),
 		hostMap:        make(map[string]big.Int),
 	}
 
@@ -454,7 +414,6 @@ func main() {
 
 	defer os.Remove(s.spreadFileName)
 
-	s.Info.Println("SATAN DA")
 	switch mode {
 
 	case "spread":
@@ -462,7 +421,6 @@ func main() {
 		s.sendSegment(spreadHost, ch)
 		<-ch
 	case "run":
-		s.Info.Println("FUCK THE FUCK YE WE ARE STARTED")
 		s.StartSegmentServer(segPort)
 	default:
 		s.Err.Fatalf("Unknown mode %q\n", os.Args[1])

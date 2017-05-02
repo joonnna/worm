@@ -38,8 +38,6 @@ func (s *Seg) targetSegmentsHandler(w http.ResponseWriter, r *http.Request) {
 	// Consume and close rest of body
 	io.Copy(ioutil.Discard, r.Body)
 
-	//s.Info.Printf("TargetHandler targetSegments: %d", ts)
-
 	s.setTargetSegments(int(ts))
 
 	leader := s.getLeader()
@@ -70,9 +68,6 @@ func (s *Seg) updateSegmentsHandler(w http.ResponseWriter, r *http.Request) {
 
 	s.setTargetSegments(int(ts))
 
-	s.Info.Printf("New targetSegments: %d", ts)
-	// Consume and close rest of body
-
 }
 
 func (s *Seg) shutdownHandler(w http.ResponseWriter, r *http.Request) {
@@ -88,9 +83,6 @@ func (s *Seg) shutdownHandler(w http.ResponseWriter, r *http.Request) {
 	s.sendTargetSegment(leader, 0, ch)
 	<-ch
 
-	// Shut down
-	s.Info.Printf("Received shutdown command, KILL WORM")
-	//s.UdpConn.Close()
 }
 
 func (s *Seg) suicideHandler(w http.ResponseWriter, r *http.Request) {
@@ -98,9 +90,6 @@ func (s *Seg) suicideHandler(w http.ResponseWriter, r *http.Request) {
 	// Consume and close body
 	io.Copy(ioutil.Discard, r.Body)
 	r.Body.Close()
-
-	// Shut down
-	s.Info.Printf("Received suicide command, committing suicide")
 
 	os.Remove(s.spreadFileName)
 
@@ -122,7 +111,6 @@ func (s *Seg) aliveHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if msg.Addr == s.getLeader() || msg.TargetSeg == 0 {
-		s.Err.Println(msg)
 		s.setTargetSegments(msg.TargetSeg)
 	}
 }

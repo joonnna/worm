@@ -13,7 +13,6 @@ import (
 type Message struct {
 	Addr      string
 	TargetSeg int
-	NumAdded  int
 }
 
 func (s *Seg) listenUDP() {
@@ -46,68 +45,11 @@ func (s *Seg) listenUDP() {
 			if msg.Addr == s.getLeader() || msg.TargetSeg == 0 {
 				s.setTargetSegments(msg.TargetSeg)
 			}
-			//addMap[msg.addr] = msg.numAdd
-			if msg.NumAdded != 0 {
-				s.setAddMap(msg.Addr, msg.NumAdded)
-			}
-			_, err = conn.WriteTo([]byte("alive"), addr)
-			if err != nil {
-				s.Err.Println(err)
-			}
+
+			_, _ = conn.WriteTo([]byte("alive"), addr)
 		}
 	}
 }
-
-/*
-func (s *Seg) listenUDP() {
-	addr := net.UDPAddr{
-		Port: 19032,
-		IP:   net.IP{s.HostName},
-	}
-
-	conn, err := net.ListenUDP("udp", &addr)
-	if err != nil {
-		s.Err.Panic(err)
-	}
-	defer conn.Close()
-
-	s.udpConn = conn
-
-	for {
-
-		data := make([]byte, 200)
-		_, addr, err := conn.ReadFrom(data)
-		if err != nil {
-			s.Err.Println(err)
-		} else {
-
-			reader := bytes.NewReader(data)
-
-			msg := &Message{}
-
-			err := json.NewDecoder(reader).Decode(msg)
-			if err != nil {
-				s.Err.Println(err)
-			}
-
-			if msg.Addr == s.getLeader() || msg.TargetSeg == 0 {
-				s.setTargetSegments(msg.TargetSeg)
-			}
-			//addMap[msg.addr] = msg.numAdd
-			s.setAddMap(msg.Addr, msg.NumAdded)
-
-			_, err = conn.WriteTo([]byte("alive"), addr)
-			if err != nil {
-				s.Err.Println(err)
-			}
-		}
-	}
-}
-
-func (s *Seg) readUDP(conn *net.UDPConn) {
-
-}
-*/
 
 func (s *Seg) PingHosts() []string {
 	hosts := s.GetAllHosts()
@@ -119,10 +61,8 @@ func (s *Seg) PingHosts() []string {
 	msg := &Message{
 		Addr:      s.HostName,
 		TargetSeg: s.getTargetSegments(),
-		NumAdded:  s.getNumAdded(),
 	}
 
-	s.Info.Println(msg.NumAdded)
 	marsh, err := json.Marshal(msg)
 	if err != nil {
 		s.Err.Println(err)
@@ -136,8 +76,6 @@ func (s *Seg) PingHosts() []string {
 	}
 
 	data := buf.Bytes()
-
-	//reader := bytes.NewReader(data)
 
 	for _, addr := range hosts {
 		go s.udpPing(addr, ch, data)
