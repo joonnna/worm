@@ -1,16 +1,12 @@
 package communication
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
 	"github.com/joonnna/worm/util"
 	"io"
 	"io/ioutil"
-
-	"net"
 	"net/http"
 	"sync"
+	"time"
 )
 
 type Comm struct {
@@ -30,15 +26,7 @@ type Comm struct {
 }
 
 type Transmission interface {
-	GetTargetSegments() int
-	GetKillRate() float32
-	Ping(addr string, ch chan<- string, data []byte)
-}
-
-type Message struct {
-	Addr      string
-	TargetSeg int
-	KillRate  float32
+	PingHosts() []string
 }
 
 func InitComm(HostName, hostPort, wormgatePort string, t Transmission) *Comm {
@@ -46,7 +34,7 @@ func InitComm(HostName, hostPort, wormgatePort string, t Transmission) *Comm {
 		HostName:     HostName,
 		WormgatePort: wormgatePort,
 		HostPort:     hostPort,
-		client:       &http.Client{},
+		client:       &http.Client{Timeout: time.Second * 2},
 		Transmission: t,
 	}
 
@@ -61,7 +49,7 @@ func (c *Comm) CommStatus(ch chan<- bool) {
 
 		c.setAllHosts(allHosts)
 
-		active := c.pingHosts()
+		active := c.PingHosts()
 
 		c.setActiveHosts(active)
 
@@ -82,46 +70,6 @@ func (c Comm) ContactHostHttp(req *http.Request) error {
 	resp.Body.Close()
 
 	return err
-}
-
-func (c *Comm) pingHosts() []string {
-	hosts := c.GetAllHosts()
-
-	var activeHosts []string
-
-	ch := make(chan string, len(hosts))
-
-	msg := &Message{
-		Addr:      c.HostName,
-		TargetSeg: c.GetTargetSegments(),
-		KillRate:  c.GetKillRate(),
-	}
-
-	marsh, err := json.Marshal(msg)
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	buf := bytes.NewBuffer(marsh)
-
-	err = json.NewEncoder(buf).Encode(msg)
-	if err != nil {
-		fmt.Println(err)
-	}
-
-	data := buf.Bytes()
-
-	for _, addr := range hosts {
-		go c.Ping(addr, ch, data)
-	}
-
-	for i := 0; i < len(hosts); i++ {
-		host := <-ch
-		if host != "" {
-			activeHosts = append(activeHosts, host)
-		}
-	}
-	return activeHosts
 }
 
 func (c *Comm) setAllHosts(hosts []string) {

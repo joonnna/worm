@@ -1,14 +1,12 @@
 package main
 
-import ()
-
 func (s *Seg) setTargetSegments(target int) {
 	s.targetMutex.Lock()
 	s.targetSegments = target
 	s.targetMutex.Unlock()
 }
 
-func (s *Seg) GetTargetSegments() int {
+func (s *Seg) getTargetSegments() int {
 	s.targetMutex.RLock()
 	ret := s.targetSegments
 	s.targetMutex.RUnlock()
@@ -70,7 +68,7 @@ func (s *Seg) resetNumStopped() {
 	s.numStoppedMutex.Unlock()
 }
 
-func (s *Seg) GetKillRate() float32 {
+func (s *Seg) getKillRate() float32 {
 	s.killRateMutex.RLock()
 	ret := s.killRate
 	s.killRateMutex.RUnlock()
@@ -82,4 +80,54 @@ func (s *Seg) setKillRate(newKillRate float32) {
 	s.killRateMutex.Lock()
 	s.killRate = newKillRate
 	s.killRateMutex.Unlock()
+}
+
+func (s *Seg) incrementNumAdded() {
+	s.numAddedMutex.Lock()
+	s.numAdded = s.numAdded + 1
+	s.numAddedMutex.Unlock()
+}
+
+func (s *Seg) getNumAdded() int {
+	s.numAddedMutex.RLock()
+	ret := s.numAdded
+	s.numAddedMutex.RUnlock()
+
+	return ret
+}
+
+func (s *Seg) resetNumAdded() {
+	s.numAddedMutex.Lock()
+	s.numAdded = 0
+	s.numAddedMutex.Unlock()
+}
+
+func (s *Seg) setAddMap(key string, value int) {
+	s.addMapMutex.Lock()
+	s.addMap[key] = value
+	s.addMapMutex.Unlock()
+}
+
+func (s *Seg) calcAdded() int {
+	s.addMapMutex.Lock()
+
+	total := 0
+	for _, val := range s.addMap {
+		total += val
+	}
+
+	s.addMapMutex.Unlock()
+
+	return total
+}
+
+func (s *Seg) resetAddMap() {
+	s.addMapMutex.Lock()
+
+	for key, _ := range s.addMap {
+		s.addMap[key] = 0
+	}
+
+	s.addMapMutex.Unlock()
+
 }

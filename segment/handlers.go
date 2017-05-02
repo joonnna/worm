@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/joonnna/worm/communication"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -16,7 +15,7 @@ func (s *Seg) indexHandler(w http.ResponseWriter, r *http.Request) {
 	io.Copy(ioutil.Discard, r.Body)
 	r.Body.Close()
 
-	killRateGuess := s.GetKillRate()
+	killRateGuess := s.getKillRate()
 
 	fmt.Fprintf(w, "%.3f\n", killRateGuess)
 }
@@ -26,7 +25,7 @@ func (s *Seg) targetSegmentsHandler(w http.ResponseWriter, r *http.Request) {
 
 	defer r.Body.Close()
 
-	if s.GetTargetSegments() == 0 {
+	if s.getTargetSegments() == 0 {
 		io.Copy(ioutil.Discard, r.Body)
 		return
 	}
@@ -39,7 +38,7 @@ func (s *Seg) targetSegmentsHandler(w http.ResponseWriter, r *http.Request) {
 	// Consume and close rest of body
 	io.Copy(ioutil.Discard, r.Body)
 
-	s.Info.Printf("TargetHandler targetSegments: %d", ts)
+	//s.Info.Printf("TargetHandler targetSegments: %d", ts)
 
 	s.setTargetSegments(int(ts))
 
@@ -47,7 +46,6 @@ func (s *Seg) targetSegmentsHandler(w http.ResponseWriter, r *http.Request) {
 
 	if s.HostName != leader {
 		ch := make(chan bool, 1)
-
 		s.sendTargetSegment(leader, int(ts), ch)
 		<-ch
 	}
@@ -59,7 +57,7 @@ func (s *Seg) updateSegmentsHandler(w http.ResponseWriter, r *http.Request) {
 
 	defer r.Body.Close()
 
-	if s.GetTargetSegments() == 0 {
+	if s.getTargetSegments() == 0 {
 		io.Copy(ioutil.Discard, r.Body)
 		return
 	}
@@ -104,9 +102,9 @@ func (s *Seg) suicideHandler(w http.ResponseWriter, r *http.Request) {
 	// Shut down
 	s.Info.Printf("Received suicide command, committing suicide")
 
-	//s.UdpConn.Close()
-
 	os.Remove(s.spreadFileName)
+
+	s.udpConn.Close()
 
 	s.httpListener.Close()
 
@@ -116,7 +114,7 @@ func (s *Seg) suicideHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Seg) aliveHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
-	msg := &communication.Message{}
+	msg := &Message{}
 
 	err := json.NewDecoder(r.Body).Decode(msg)
 	if err != nil {
@@ -124,6 +122,7 @@ func (s *Seg) aliveHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if msg.Addr == s.getLeader() || msg.TargetSeg == 0 {
+		s.Err.Println(msg)
 		s.setTargetSegments(msg.TargetSeg)
 	}
 }

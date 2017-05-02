@@ -61,6 +61,7 @@ var segmentClient *http.Client
 func createClient() *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{},
+		//Timeout:   time.Second * 2,
 	}
 }
 
