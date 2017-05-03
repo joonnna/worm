@@ -2,3 +2,4 @@ main
 tmp.tar.gz
 .fuse_hidden*
 tmp
+.main.go.swp
