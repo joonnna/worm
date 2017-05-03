@@ -1,5 +1,7 @@
 #!/bin/bash
-for GO in *.go
+
+for GO in ./*/
 do
-    go build $GO
+    #echo $GO
+    go install $GO
 done

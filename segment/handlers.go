@@ -10,8 +10,6 @@ import (
 )
 
 func (s *Seg) indexHandler(w http.ResponseWriter, r *http.Request) {
-
-	// We don't use the request body. But we should consume it anyway.
 	io.Copy(ioutil.Discard, r.Body)
 	r.Body.Close()
 
@@ -35,7 +33,6 @@ func (s *Seg) targetSegmentsHandler(w http.ResponseWriter, r *http.Request) {
 		s.Err.Printf("Error parsing targetSegments (%d items): %s", pc, rateErr)
 		return
 	}
-	// Consume and close rest of body
 	io.Copy(ioutil.Discard, r.Body)
 
 	s.setTargetSegments(int(ts))
@@ -71,8 +68,6 @@ func (s *Seg) updateSegmentsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Seg) shutdownHandler(w http.ResponseWriter, r *http.Request) {
-
-	// Consume and close body
 	io.Copy(ioutil.Discard, r.Body)
 	r.Body.Close()
 
@@ -86,8 +81,6 @@ func (s *Seg) shutdownHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Seg) suicideHandler(w http.ResponseWriter, r *http.Request) {
-
-	// Consume and close body
 	io.Copy(ioutil.Discard, r.Body)
 	r.Body.Close()
 

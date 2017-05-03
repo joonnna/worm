@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-
 	"flag"
 	"fmt"
 	"github.com/joonnna/worm/communication"
@@ -47,8 +46,6 @@ type Seg struct {
 	hostMap    map[string]big.Int
 	pendingMap map[string]time.Time
 
-	numAddedMutex sync.RWMutex
-	addMapMutex   sync.RWMutex
 	targetMutex   sync.RWMutex
 	leaderMutex   sync.RWMutex
 	killRateMutex sync.RWMutex
@@ -58,9 +55,7 @@ type Seg struct {
 }
 
 func (s *Seg) StartSegmentServer(segPort string) {
-
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	//http.DefaultTransport.(*http.Transport).MaxIdleConns = 1000
 
 	http.HandleFunc("/", s.indexHandler)
 	http.HandleFunc("/targetsegments", s.targetSegmentsHandler)
@@ -95,11 +90,8 @@ func (s *Seg) StartSegmentServer(segPort string) {
 func (s *Seg) logLeader() {
 	for {
 		time.Sleep(time.Second * 10)
-		//str := fmt.Sprintf("%s : %d : %s\n", s.HostName, s.getTargetSegments(), s.getLeader())
 		str := fmt.Sprintf("%s : %d : %s : %d : %f\n", s.HostName, s.getTargetSegments(), s.getLeader(), len(s.GetActiveHosts()), s.getKillRate())
 		s.leaderFile.Write([]byte(str))
-		//str := strings.Join(s.GetActiveHosts(), " ")
-		//s.leaderFile.Write([]byte(fmt.Sprintf("%s : %s\n", s.HostName, str)))
 		s.leaderFile.Sync()
 	}
 }
@@ -399,7 +391,7 @@ func addFlags(flagset *flag.FlagSet, wormPort, segPort, mode, host *string, targ
 	flagset.StringVar(segPort, "sp", ":8182", "segment port (prefix with colon)")
 	flagset.StringVar(mode, "mode", "run", "segment mode")
 	flagset.StringVar(host, "host", "compute-1-0", "host to spread to")
-	flagset.IntVar(target, "target", 2, "segment target number")
+	flagset.IntVar(target, "target", 5, "segment target number")
 }
 
 func main() {
@@ -419,21 +411,20 @@ func main() {
 	errPrefix := fmt.Sprintf("\x1b[31m %s \x1b[0m", hostName)
 	infoPrefix := fmt.Sprintf("\x1b[32m %s \x1b[0m", hostName)
 
-	logFile, _ := os.OpenFile("/home/jmi021/log", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0660)
-
-	leaderFile, _ := os.OpenFile("/home/jmi021/leader", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0660)
+	logFile, _ := os.OpenFile("/var/tmp/log", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0660)
+	leaderFile, _ := os.OpenFile("/var/tmp/leader", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0660)
 
 	errLog := log.New(logFile, errPrefix, log.Lshortfile)
 	infoLog := log.New(logFile, infoPrefix, log.Lshortfile)
 
 	s := &Seg{
 		targetSegments: targetSegments,
-		Logger:         &Logger{Err: errLog, Info: infoLog},
-		logFile:        logFile,
 		ownHash:        util.ComputeHash(hostName),
-		leaderFile:     leaderFile,
 		hostMap:        make(map[string]big.Int),
 		pendingMap:     make(map[string]time.Time),
+		Logger:         &Logger{Err: errLog, Info: infoLog},
+		logFile:        logFile,
+		leaderFile:     leaderFile,
 	}
 
 	comm := communication.InitComm(hostName, segPort, wormPort, s)
